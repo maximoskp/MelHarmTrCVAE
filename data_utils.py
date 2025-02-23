@@ -7,13 +7,46 @@ import random
 import os
 import numpy as np
 from transformers import DataCollatorForSeq2Seq
+import mir_eval
+from copy import deepcopy
 
-def make_harmonic_text_description_from_file(file_path, max_length=None, num_bars=None):
-    text_description = ''
-    return text_description
-# end make_harmonic_text_description_from_file
+MIR_QUALITIES = mir_eval.chord.QUALITIES
+EXT_MIR_QUALITIES = deepcopy( MIR_QUALITIES )
+for k in list(MIR_QUALITIES.keys()) + ['7(b9)', '7(#9)', '7(#11)', '7(b13)']:
+    _, semitone_bitmap, _ = mir_eval.chord.encode( 'C' + (len(k) > 0)*':' + k, reduce_extended_chords=True )
+    EXT_MIR_QUALITIES[k] = semitone_bitmap
 
-class SeparatedMelHarmTextDataset(Dataset):
+INT_TO_ROOT_SHARP = {
+    0: 'C',
+    1: 'C#',
+    2: 'D',
+    3: 'D#',
+    4: 'E',
+    5: 'F',
+    6: 'F#',
+    7: 'G',
+    8: 'G#',
+    9: 'A',
+    10: 'A#',
+    11: 'B',
+}
+ROOT_TO_INT_SHARP = {v:k for k, v in INT_TO_ROOT_SHARP.items()}
+
+all_chords = {}
+
+for r_str, r_int in ROOT_TO_INT_SHARP.items():
+    for type_str, type_array in EXT_MIR_QUALITIES.items():
+        all_chords[ r_str + (len(type_str)>0)*':' + type_str] = np.roll( type_array, r_int )
+
+mir_rpcs = tuple( all_chords.values() )
+mir_symbols = tuple( all_chords.keys() )
+
+def make_markov_from_tokens_list(s):
+    m = np.zeros( (len(all_chords), len(all_chords)) )
+    return m
+# end make_markov_from_tokens_list
+
+class SeparatedMelHarmMarkovDataset(Dataset):
     def __init__(self, root_dir, merged_tokenizer, max_length=512, pad_to_max_length=True, \
                 return_attention_mask=False, num_bars=8):
         # root_dir: the directory that includes subdirectories with mlx or xml files
@@ -56,9 +89,8 @@ class SeparatedMelHarmTextDataset(Dataset):
         attention_mask = torch.tensor(encoded['attention_mask'][:start_harmony_position], dtype=torch.long)
         labels = labels[start_harmony_position:]  # Ignore question tokens and <h> in loss computation
         labels[ labels == self.merged_tokenizer.pad_token_id ] = -100
-        text_description = ''
-        if self.max_length is not None and self.num_bars is not None:
-            text_description = make_harmonic_text_description_from_file(data_file, self.max_length, self.num_bars)
+        # make mir_eval transition table
+        m = make_markov_from_tokens_list(encoded['input_tokens'][start_harmony_position:])
         return {
             'input_ids': input_ids,
             'attention_mask': attention_mask,
