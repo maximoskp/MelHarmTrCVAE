@@ -52,6 +52,14 @@ for k in list(MIR_QUALITIES.keys()) + ['7(b9)', '7(#9)', '7(#11)', '7(b13)']:
     _, semitone_bitmap, _ = mir_eval.chord.encode( 'C' + (len(k) > 0)*':' + k, reduce_extended_chords=True )
     EXT_MIR_QUALITIES[k] = semitone_bitmap
 
+ROOT_TO_INT_SHARP = {v:k for k, v in INT_TO_ROOT_SHARP.items()}
+all_chords = {}
+for r_str, r_int in ROOT_TO_INT_SHARP.items():
+    for type_str, type_array in EXT_MIR_QUALITIES.items():
+        all_chords[ r_str + (len(type_str)>0)*':' + type_str] = np.roll( type_array, r_int )
+mir_rpcs = tuple( all_chords.values() )
+mir_symbols = tuple( all_chords.keys() )
+
 class HarmonyTokenizerBase(PreTrainedTokenizer):
     def __init__(self, vocab=None, special_tokens=None, **kwargs):
         self.unk_token = '<unk>'
@@ -209,6 +217,10 @@ class HarmonyTokenizerBase(PreTrainedTokenizer):
     def decode_chord_symbol(self, harmony_tokens):
         raise NotImplementedError()
     # end handle_chord_symbol
+
+    def make_markov_from_tokens_list(self, harmony_tokens):
+        raise NotImplementedError()
+    # end make_markov_from_tokens_list
 
     def fit(self, corpus):
         pass
@@ -603,6 +615,10 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
         return self.transform(corpus, add_start_harmony_token=add_start_harmony_token)
     # end __call__
     
+    def make_markov_from_tokens_list(self, harmony_tokens):
+        return self.harmony_tokenizer.make_markov_from_tokens_list(harmony_tokens)
+    # end make_markov_from_tokens_list
+
 # end class MergedMelHarmTokenizer
 
 class ChordSymbolTokenizer(HarmonyTokenizerBase):
@@ -664,6 +680,51 @@ class ChordSymbolTokenizer(HarmonyTokenizerBase):
     def __call__(self, corpus, add_start_harmony_token=True):
         return self.transform(corpus, add_start_harmony_token=add_start_harmony_token)
     # end __call__
+
+    def make_markov_from_tokens_list(self, harmony_tokens):
+        m = np.zeros( (len(all_chords), len(all_chords)) )
+        prev_idx = -1
+        next_idx = -1
+        i = 0
+        while i < len(harmony_tokens):
+            if i < len(harmony_tokens) and \
+                    'bar' not in harmony_tokens[i] and \
+                    'position' not in harmony_tokens[i] and \
+                    '</s>' not in harmony_tokens[i] and \
+                    '<s>' not in harmony_tokens[i] and \
+                    '<h>' not in harmony_tokens[i]:
+                # Decode the chord symbol
+                # collect tokens that correspond to the current chord
+                # tokens = [harmony_tokens[i]]
+                # for ChordSymbolTokenizer, token should be ready for markov
+                try:
+                    if prev_idx == -1:
+                        prev_idx = all_chords.index( harmony_tokens[i] )
+                    else:
+                        next_idx = all_chords.index( harmony_tokens[i] )
+                        m[prev_idx, next_idx] += 1
+                        prev_idx = next_idx
+                except:
+                    print(f'Chord symbol: {harmony_tokens[i]} not found.')
+                i += 1
+                # while i < len(harmony_tokens) and \
+                #         'bar' not in harmony_tokens[i] and \
+                #         'position' not in harmony_tokens[i] and \
+                #         '</s>' not in harmony_tokens[i]:
+                #     tokens.append(harmony_tokens[i])
+                #     i += 1
+                # i -= 1
+                # chord_symbol_obj = None
+                # chord_obj = None
+                # try:
+                #     chord_symbol_obj, chord_obj = self.harmony_tokenizer.decode_chord_symbol(tokens)
+                # except:
+                #     print(f'cannot decode tokens: {tokens}')
+                # if chord_symbol_obj is not None and chord_obj is not None:
+        # normalize markov
+        row_sums = m.sum(axis=1)
+        return m/row_sums[:, np.newaxis]
+    # end make_markov_from_tokens_list
 
 # end class ChordSymbolTokenizer
 
@@ -736,6 +797,10 @@ class RootTypeTokenizer(HarmonyTokenizerBase):
         return self.transform(corpus, add_start_harmony_token=add_start_harmony_token)
     # end __call__
 
+    def make_markov_from_tokens_list(self, harmony_tokens):
+        print('Not implemented yet for ', self.__class__.__name__)
+    # end make_markov_from_tokens_list
+
 # end class RootTypeTokenizer
 
 class PitchClassTokenizer(HarmonyTokenizerBase):
@@ -785,6 +850,10 @@ class PitchClassTokenizer(HarmonyTokenizerBase):
     def __call__(self, corpus, add_start_harmony_token=True):
         return self.transform(corpus, add_start_harmony_token=add_start_harmony_token)
     # end __call__
+
+    def make_markov_from_tokens_list(self, harmony_tokens):
+        print('Not implemented yet for ', self.__class__.__name__)
+    # end make_markov_from_tokens_list
 
 # end class PitchClassTokenizer
 
@@ -842,6 +911,10 @@ class RootPCTokenizer(HarmonyTokenizerBase):
         return self.transform(corpus, add_start_harmony_token=add_start_harmony_token)
     # end __call__
 
+    def make_markov_from_tokens_list(self, harmony_tokens):
+        print('Not implemented yet for ', self.__class__.__name__)
+    # end make_markov_from_tokens_list
+
 # end class RootPCTokenizer
 
 class GCTRootPCTokenizer(HarmonyTokenizerBase):
@@ -895,6 +968,10 @@ class GCTRootPCTokenizer(HarmonyTokenizerBase):
     def __call__(self, corpus, add_start_harmony_token=True):
         return self.transform(corpus, add_start_harmony_token=add_start_harmony_token)
     # end __call__
+
+    def make_markov_from_tokens_list(self, harmony_tokens):
+        print('Not implemented yet for ', self.__class__.__name__)
+    # end make_markov_from_tokens_list
 
 # end class GCTRootPCTokenizer
 
@@ -975,6 +1052,10 @@ class GCTSymbolTokenizer(HarmonyTokenizerBase):
     def __call__(self, corpus, add_start_harmony_token=True):
         return self.transform(corpus, add_start_harmony_token=add_start_harmony_token)
     # end __call__
+
+    def make_markov_from_tokens_list(self, harmony_tokens):
+        print('Not implemented yet for ', self.__class__.__name__)
+    # end make_markov_from_tokens_list
 
 # end class GCTSymbolTokenizer
 
@@ -1066,6 +1147,10 @@ class GCTRootTypeTokenizer(HarmonyTokenizerBase):
     def __call__(self, corpus, add_start_harmony_token=True):
         return self.transform(corpus, add_start_harmony_token=add_start_harmony_token)
     # end __call__
+
+    def make_markov_from_tokens_list(self, harmony_tokens):
+        print('Not implemented yet for ', self.__class__.__name__)
+    # end make_markov_from_tokens_list
 
 # end class GCTRootTypeTokenizer
 
