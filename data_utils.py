@@ -54,12 +54,12 @@ class SeparatedMelHarmMarkovDataset(Dataset):
         labels = labels[start_harmony_position:]  # Ignore question tokens and <h> in loss computation
         labels[ labels == self.merged_tokenizer.pad_token_id ] = -100
         # make mir_eval transition table
-        m = self.merged_tokenizer.make_markov_from_tokens_list(encoded['input_tokens'][start_harmony_position:], self.merged_tokenizer)
+        transitions = self.merged_tokenizer.make_markov_from_tokens_list(encoded['input_tokens'][start_harmony_position:])
         return {
             'input_ids': input_ids,
             'attention_mask': attention_mask,
             'labels': labels,
-            'transitions': m
+            'transitions': transitions
         }
     # end getitem
 # end class dataset

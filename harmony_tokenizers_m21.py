@@ -690,6 +690,8 @@ class ChordSymbolTokenizer(HarmonyTokenizerBase):
             if i < len(harmony_tokens) and \
                     'bar' not in harmony_tokens[i] and \
                     'position' not in harmony_tokens[i] and \
+                    '<pad>' not in harmony_tokens[i] and \
+                    '<emp>' not in harmony_tokens[i] and \
                     '</s>' not in harmony_tokens[i] and \
                     '<s>' not in harmony_tokens[i] and \
                     '<h>' not in harmony_tokens[i]:
@@ -699,13 +701,15 @@ class ChordSymbolTokenizer(HarmonyTokenizerBase):
                 # for ChordSymbolTokenizer, token should be ready for markov
                 try:
                     if prev_idx == -1:
-                        prev_idx = all_chords.index( harmony_tokens[i] )
+                        prev_idx = mir_symbols.index( harmony_tokens[i] )
                     else:
-                        next_idx = all_chords.index( harmony_tokens[i] )
+                        next_idx = mir_symbols.index( harmony_tokens[i] )
                         m[prev_idx, next_idx] += 1
                         prev_idx = next_idx
                 except:
                     print(f'Chord symbol: {harmony_tokens[i]} not found.')
+                i += 1
+            else:
                 i += 1
                 # while i < len(harmony_tokens) and \
                 #         'bar' not in harmony_tokens[i] and \
@@ -723,6 +727,7 @@ class ChordSymbolTokenizer(HarmonyTokenizerBase):
                 # if chord_symbol_obj is not None and chord_obj is not None:
         # normalize markov
         row_sums = m.sum(axis=1)
+        row_sums[row_sums == 0] = 1
         return m/row_sums[:, np.newaxis]
     # end make_markov_from_tokens_list
 
