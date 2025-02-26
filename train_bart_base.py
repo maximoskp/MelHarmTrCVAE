@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from transformers import BartForConditionalGeneration, BartConfig, DataCollatorForSeq2Seq
 from tqdm import tqdm
 from models import TransGraphVAE
+import csv
 
 train_dir = '/mnt/ssd2/maximos/data/hooktheory_train'
 test_dir = '/mnt/ssd2/maximos/data/hooktheory_test'
@@ -85,15 +86,15 @@ for param in bart.parameters():
 
 collator = create_data_collator(tokenizer, model=bart)
 trainloader = DataLoader(train_dataset, batch_size=128, shuffle=True, collate_fn=collator)
-testloader = DataLoader(test_dataset, batch_size=128, shuffle=True, collate_fn=collator)
+valloader = DataLoader(test_dataset, batch_size=128, shuffle=True, collate_fn=collator)
 
 epochs = 100
 
 config = {
-    'hidden_dim_LSTM': 256,
+    'hidden_dim_LSTM': 512,
     'hidden_dim_GNN': 256,
-    'latent_dim': 256,
-    'condition_dim': 128,
+    'latent_dim': 512,
+    'condition_dim': 256,
     'use_attention': False
 }
 
@@ -101,11 +102,29 @@ model = TransGraphVAE(transformer=bart, **config)
 model.to(device)
 
 model.cvae.train()
-optimizer = AdamW(model.cvae.parameters(), lr=5e-5)
+optimizer = AdamW(model.cvae.parameters(), lr=5e-4)
+
+# save results
+os.makedirs('results/bart_cvae', exist_ok=True)
+results_path = 'results/bart_cvae/' + tokenizer_name + '.csv'
+result_fields = ['epoch', 'train_loss', 'val_loss', 'sav_version']
+with open( results_path, 'w' ) as f:
+    writer = csv.writer(f)
+    writer.writerow( result_fields )
+
+# keep best validation loss for saving
+best_val_loss = np.inf
+save_dir = 'saved_models/bart_cvae/' + tokenizer_name + '/'
+os.makedirs(save_dir, exist_ok=True)
+transformer_path = save_dir + tokenizer_name + '.pt'
+saving_version = 0
 
 # Training loop
 for epoch in range(epochs):
     print('training')
+    train_loss = 0
+    running_loss = 0
+    batch_num = 0
     with tqdm(trainloader, unit='batch') as tepoch:
         tepoch.set_description(f'Epoch {epoch} | trn')
         for batch in tepoch:
@@ -118,4 +137,38 @@ for epoch in range(epochs):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            tepoch.set_postfix(loss=loss.item(), accuracy=0)
+
+            # update loss
+            batch_num += 1
+            running_loss += loss.item()
+            train_loss = running_loss/batch_num
+            tepoch.set_postfix(loss=train_loss)#, accuracy=0)
+    val_loss = 0
+    running_loss = 0
+    batch_num = 0
+    print('validation')
+    with torch.no_grad():
+        with tqdm(valloader, unit='batch') as tepoch:
+            tepoch.set_description(f'Epoch {epoch} | val')
+            for batch in tepoch:
+                input_ids = batch['input_ids'].to(device)
+                transitions = batch['transitions'].to(device)
+                # attention_mask = batch['attention_mask'].to(device)
+                # labels = batch['labels'].to(device)
+                outputs = model(input_ids, transitions)
+                loss = outputs['loss']
+
+                # update loss
+                batch_num += 1
+                running_loss += loss.item()
+                val_loss = running_loss/batch_num
+                tepoch.set_postfix(loss=val_loss)#, accuracy=0)
+    if best_val_loss > val_loss:
+        print('saving!')
+        saving_version += 1
+        best_val_loss = val_loss
+        torch.save(model.state_dict(), transformer_path)
+        print(f'validation: loss={val_loss}')
+    with open( results_path, 'a' ) as f:
+        writer = csv.writer(f)
+        writer.writerow( [epoch, train_loss, val_loss, saving_version] )
