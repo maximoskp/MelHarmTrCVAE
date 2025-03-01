@@ -31,7 +31,7 @@ tokenizer = m_chordSymbolTokenizer
 tokenizer_name = 'ChordSymbolTokenizer'
 
 train_dataset = SeparatedMelHarmMarkovDataset(train_dir, tokenizer, max_length=512, num_bars=64)
-test_dataset = SeparatedMelHarmMarkovDataset(train_dir, tokenizer, max_length=512, num_bars=64)
+test_dataset = SeparatedMelHarmMarkovDataset(test_dir, tokenizer, max_length=512, num_bars=64)
 
 # Data collator for BART
 def create_data_collator(tokenizer, model):
@@ -102,7 +102,7 @@ model = TransGraphVAE(transformer=bart, **config)
 model.to(device)
 
 model.cvae.train()
-optimizer = AdamW(model.cvae.parameters(), lr=5e-4)
+optimizer = AdamW(model.cvae.parameters(), lr=1e-3)
 
 # save results
 os.makedirs('results/bart_cvae', exist_ok=True)

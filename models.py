@@ -223,7 +223,7 @@ class CVAE(nn.Module):
 # end CVAE
 
 class TransGraphVAE(nn.Module):
-    def __init__(self, transformer, **config):
+    def __init__(self, transformer, device=torch.device('cpu'), **config):
         """
         TransGraphVAE model that involves a GNN-conditioned BiLSTM VAE between a pretrained
         frozen transformer encoder-decoder.
@@ -238,6 +238,7 @@ class TransGraphVAE(nn.Module):
         self.t_encoder = transformer.get_encoder()
         self.t_decoder = transformer.get_decoder()
         self.cvae = CVAE(self.transformer.config.d_model, **config)
+        self.device = device
     # end init
 
     def compute_loss(self, recon_x, x, mu, logvar):
@@ -261,24 +262,66 @@ class TransGraphVAE(nn.Module):
         return recon_loss + kl_loss, recon_loss, kl_loss
     # end compute_loss
 
-    def forward(self, x, transitions, generate_max_tokens=-1):
+    def forward(self, x, transitions, encoder_attention=None, generate_max_tokens=-1, temperature=1.0):
+        input_ids = x
         x = self.t_encoder(x).last_hidden_state
         recon_x, mu, logvar  = self.cvae(x, transitions)
         total_loss, recon_loss, kl_loss = self.compute_loss(recon_x, x, mu, logvar)
-        y_generated_tokens = None
-        y_recon_generated_tokens = None
+        g_recon = None
+        g = None
         if generate_max_tokens > 0:
-            # TODO: implement autoregressive process with temperature
-            y_recon = self.t_decoder( recon_x ) # output from reconstruction
-            y = self.t_decoder( x ) # normal output
+            # autoregressive process with temperature
+            # output from reconstruction
+            if encoder_attention is None:
+                encoder_attention = (input_ids != self.transformer.config.pad_token_id)
+            g_recon = self.generate(input_ids, recon_x, encoder_attention, generate_max_tokens, temperature)
+            g = self.generate(input_ids, x, encoder_attention, generate_max_tokens, temperature)
         return {
             'loss': total_loss,
             'recon_loss': recon_loss,
             'kl_loss': kl_loss,
             'x': x,
             'recon_x': recon_x,
-            'y_tokens': y_generated_tokens,
-            'recon_y_tokens': y_recon_generated_tokens
+            'generated_ids': g_recon,
+            'generated_recon_ids': g
         }
     # end forward
+
+    def generate(self, input_ids, encoder_hidden_states, encoder_attention, max_length, temperature):
+        batch_size = input_ids.shape[0]
+        bos_token_id = self.transformer.config.bos_token_id
+        eos_token_id = self.transformer.config.eos_token_id
+        decoder_input_ids = torch.full((batch_size, 1), bos_token_id, dtype=torch.long).to(self.device)  # (batch_size, 1)
+        batch_size = input_ids.shape[0]
+        # Track finished sequences
+        finished = torch.zeros(batch_size, dtype=torch.bool).to(self.device)  # (batch_size,)
+
+        for _ in range(max_length):
+            # Pass through the decoder
+            decoder_outputs = self.t_decoder(
+                input_ids=decoder_input_ids,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_attention,
+            )
+
+            # Get the logits of the last generated token
+            logits = decoder_outputs.last_hidden_state[:, -1, :]  # (batch_size, vocab_size)
+
+            # Apply temperature scaling and softmax
+            probs = F.softmax(logits / temperature, dim=-1)  # (batch_size, vocab_size)
+
+            # Sample next token
+            next_token_ids = torch.multinomial(probs, num_samples=1)  # (batch_size, 1)
+
+            # Stop condition: mask finished sequences
+            finished |= next_token_ids.squeeze(1) == eos_token_id
+
+            # Append to decoder input
+            decoder_input_ids = torch.cat([decoder_input_ids, next_token_ids], dim=1)  # (batch_size, seq_len)
+
+            # If all sequences are finished, stop early
+            if finished.all():
+                break
+        return decoder_input_ids
+    # end generate
 # end class TransGraphVAE
