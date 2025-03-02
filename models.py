@@ -223,7 +223,7 @@ class CVAE(nn.Module):
 # end CVAE
 
 class TransGraphVAE(nn.Module):
-    def __init__(self, transformer, device=torch.device('cpu'), **config):
+    def __init__(self, transformer, device=torch.device('cpu'), tokenizer=None, **config):
         """
         TransGraphVAE model that involves a GNN-conditioned BiLSTM VAE between a pretrained
         frozen transformer encoder-decoder.
@@ -239,6 +239,7 @@ class TransGraphVAE(nn.Module):
         self.t_decoder = transformer.get_decoder()
         self.cvae = CVAE(self.transformer.config.d_model, **config)
         self.device = device
+        self.tokenizer = tokenizer
     # end init
 
     def compute_loss(self, recon_x, x, mu, logvar):
@@ -289,8 +290,12 @@ class TransGraphVAE(nn.Module):
 
     def generate(self, input_ids, encoder_hidden_states, encoder_attention, max_length, temperature):
         batch_size = input_ids.shape[0]
-        bos_token_id = self.transformer.config.bos_token_id
-        eos_token_id = self.transformer.config.eos_token_id
+        if self.tokenizer is None:
+            bos_token_id = self.transformer.config.bos_token_id
+            eos_token_id = self.transformer.config.eos_token_id
+        else:
+            bos_token_id = self.tokenizer.vocab[self.tokenizer.harmony_tokenizer.start_harmony_token]
+            eos_token_id = self.transformer.config.eos_token_id
         decoder_input_ids = torch.full((batch_size, 1), bos_token_id, dtype=torch.long).to(self.device)  # (batch_size, 1)
         batch_size = input_ids.shape[0]
         # Track finished sequences

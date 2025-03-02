@@ -88,13 +88,13 @@ collator = create_data_collator(tokenizer, model=bart)
 trainloader = DataLoader(train_dataset, batch_size=128, shuffle=True, collate_fn=collator)
 valloader = DataLoader(test_dataset, batch_size=128, shuffle=True, collate_fn=collator)
 
-epochs = 100
+epochs = 1000
 
 config = {
-    'hidden_dim_LSTM': 512,
-    'hidden_dim_GNN': 256,
-    'latent_dim': 512,
-    'condition_dim': 256,
+    'hidden_dim_LSTM': 1024,
+    'hidden_dim_GNN': 1024,
+    'latent_dim': 1024,
+    'condition_dim': 1024,
     'use_attention': False
 }
 
