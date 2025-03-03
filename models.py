@@ -275,8 +275,10 @@ class TransGraphVAE(nn.Module):
             # output from reconstruction
             if encoder_attention is None:
                 encoder_attention = (input_ids != self.transformer.config.pad_token_id)
-            g_recon = self.generate(input_ids, recon_x, encoder_attention, generate_max_tokens, temperature)
-            g = self.generate(input_ids, x, encoder_attention, generate_max_tokens, temperature)
+            print('recon generation')
+            g_recon = self.generate(recon_x, encoder_attention, generate_max_tokens, temperature)
+            print('normal generation')
+            g = self.generate(x, encoder_attention, generate_max_tokens, temperature)
         return {
             'loss': total_loss,
             'recon_loss': recon_loss,
@@ -288,8 +290,9 @@ class TransGraphVAE(nn.Module):
         }
     # end forward
 
-    def generate(self, input_ids, encoder_hidden_states, encoder_attention, max_length, temperature):
-        batch_size = input_ids.shape[0]
+    def generate(self, encoder_hidden_states, encoder_attention, max_length, temperature):
+        batch_size = encoder_hidden_states.shape[0]
+        print('batch_size:', batch_size)
         if self.tokenizer is None:
             bos_token_id = self.transformer.config.bos_token_id
             eos_token_id = self.transformer.config.eos_token_id
@@ -297,10 +300,9 @@ class TransGraphVAE(nn.Module):
             bos_token_id = self.tokenizer.vocab[self.tokenizer.harmony_tokenizer.start_harmony_token]
             eos_token_id = self.transformer.config.eos_token_id
         decoder_input_ids = torch.full((batch_size, 1), bos_token_id, dtype=torch.long).to(self.device)  # (batch_size, 1)
-        batch_size = input_ids.shape[0]
         # Track finished sequences
         finished = torch.zeros(batch_size, dtype=torch.bool).to(self.device)  # (batch_size,)
-
+        print('decoder_input_ids:', decoder_input_ids)
         for _ in range(max_length):
             # Pass through the decoder
             decoder_outputs = self.t_decoder(

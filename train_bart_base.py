@@ -33,11 +33,6 @@ tokenizer_name = 'ChordSymbolTokenizer'
 train_dataset = SeparatedMelHarmMarkovDataset(train_dir, tokenizer, max_length=512, num_bars=64)
 test_dataset = SeparatedMelHarmMarkovDataset(test_dir, tokenizer, max_length=512, num_bars=64)
 
-# Data collator for BART
-def create_data_collator(tokenizer, model):
-    return DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model, padding=True)
-# end create_data_collator
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 bart_config = BartConfig(
@@ -61,6 +56,11 @@ bart_config = BartConfig(
 )
 
 bart = BartForConditionalGeneration(bart_config)
+
+# Data collator for BART
+def create_data_collator(tokenizer, model):
+    return DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model, padding=True)
+# end create_data_collator
 
 bart_path = 'saved_models/bart/' + tokenizer_name + '/' + tokenizer_name + '.pt'
 if device == 'cpu':
@@ -116,7 +116,7 @@ with open( results_path, 'w' ) as f:
 best_val_loss = np.inf
 save_dir = 'saved_models/bart_cvae/' + tokenizer_name + '/'
 os.makedirs(save_dir, exist_ok=True)
-transformer_path = save_dir + tokenizer_name + '.pt'
+transformer_cvae_path = save_dir + tokenizer_name + '.pt'
 saving_version = 0
 
 # Training loop
@@ -167,7 +167,7 @@ for epoch in range(epochs):
         print('saving!')
         saving_version += 1
         best_val_loss = val_loss
-        torch.save(model.state_dict(), transformer_path)
+        torch.save(model.state_dict(), transformer_cvae_path)
         print(f'validation: loss={val_loss}')
     with open( results_path, 'a' ) as f:
         writer = csv.writer(f)
