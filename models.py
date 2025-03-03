@@ -235,8 +235,8 @@ class TransGraphVAE(nn.Module):
         """
         super(TransGraphVAE, self).__init__()
         self.transformer = transformer
-        self.t_encoder = transformer.get_encoder()
-        self.t_decoder = transformer.get_decoder()
+        self.t_encoder = transformer.model.encoder
+        self.t_decoder = transformer.model.decoder
         self.cvae = CVAE(self.transformer.config.d_model, **config)
         self.device = device
         self.tokenizer = tokenizer
@@ -298,6 +298,7 @@ class TransGraphVAE(nn.Module):
             eos_token_id = self.transformer.config.eos_token_id
         else:
             bos_token_id = self.tokenizer.vocab[self.tokenizer.harmony_tokenizer.start_harmony_token]
+            # bos_token_id = self.transformer.config.bos_token_id
             eos_token_id = self.transformer.config.eos_token_id
         decoder_input_ids = torch.full((batch_size, 1), bos_token_id, dtype=torch.long).to(self.device)  # (batch_size, 1)
         # Track finished sequences
