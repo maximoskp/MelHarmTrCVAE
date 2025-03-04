@@ -292,14 +292,15 @@ class TransGraphVAE(nn.Module):
 
     def generate(self, encoder_hidden_states, encoder_attention, max_length, temperature):
         batch_size = encoder_hidden_states.shape[0]
-        print('batch_size:', batch_size)
-        if self.tokenizer is None:
-            bos_token_id = self.transformer.config.bos_token_id
-            eos_token_id = self.transformer.config.eos_token_id
-        else:
-            bos_token_id = self.tokenizer.vocab[self.tokenizer.harmony_tokenizer.start_harmony_token]
-            # bos_token_id = self.transformer.config.bos_token_id
-            eos_token_id = self.transformer.config.eos_token_id
+        bos_token_id = self.transformer.config.bos_token_id
+        eos_token_id = self.transformer.config.eos_token_id
+        # if self.tokenizer is None:
+        #     bos_token_id = self.transformer.config.bos_token_id
+        #     eos_token_id = self.transformer.config.eos_token_id
+        # else:
+        #     bos_token_id = self.tokenizer.vocab[self.tokenizer.harmony_tokenizer.start_harmony_token]
+        #     # bos_token_id = self.transformer.config.bos_token_id
+        #     eos_token_id = self.transformer.config.eos_token_id
         decoder_input_ids = torch.full((batch_size, 1), bos_token_id, dtype=torch.long).to(self.device)  # (batch_size, 1)
         # Track finished sequences
         finished = torch.zeros(batch_size, dtype=torch.bool).to(self.device)  # (batch_size,)
@@ -313,7 +314,7 @@ class TransGraphVAE(nn.Module):
             )
 
             # Get the logits of the last generated token
-            logits = decoder_outputs.last_hidden_state[:, -1, :]  # (batch_size, vocab_size)
+            logits = self.transformer.lm_head(decoder_outputs.last_hidden_state[:, -1, :])  # (batch_size, vocab_size)
 
             # Apply temperature scaling and softmax
             probs = F.softmax(logits / temperature, dim=-1)  # (batch_size, vocab_size)
