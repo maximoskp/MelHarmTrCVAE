@@ -279,6 +279,11 @@ class TransGraphVAE(nn.Module):
             g_recon = self.generate(recon_x, encoder_attention, generate_max_tokens, temperature)
             print('normal generation')
             g = self.generate(x, encoder_attention, generate_max_tokens, temperature)
+            generated_markov = None
+            recon_markov = None
+            if self.tokenizer is not None:
+                generated_markov = self.tokenizer.make_markov_from_token_ids_tensor(g)
+                recon_markov = self.tokenizer.make_markov_from_token_ids_tensor(g_recon)
         return {
             'loss': total_loss,
             'recon_loss': recon_loss,
@@ -286,7 +291,9 @@ class TransGraphVAE(nn.Module):
             'x': x,
             'recon_x': recon_x,
             'generated_ids': g_recon,
-            'generated_recon_ids': g
+            'generated_recon_ids': g,
+            'generated_markov': generated_markov,
+            'recon_markov': recon_markov
         }
     # end forward
 

@@ -1,6 +1,7 @@
 # https://huggingface.co/docs/transformers/v4.47.1/en/internal/tokenization_utils#transformers.PreTrainedTokenizer
 from tqdm import tqdm
 from transformers import PreTrainedTokenizer
+import torch
 from music21 import converter, harmony, pitch, note, interval, stream, meter, chord
 import mir_eval
 from copy import deepcopy
@@ -617,6 +618,16 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
     
     def make_markov_from_tokens_list(self, harmony_tokens):
         return self.harmony_tokenizer.make_markov_from_tokens_list(harmony_tokens)
+    # end make_markov_from_tokens_list
+
+    def make_markov_from_token_ids_tensor(self, harmony_token_ids):
+        markovs = []
+        for ids in harmony_token_ids:
+            harmony_tokens = []
+            for i in ids:
+                harmony_tokens.append( self.harmony_tokenizer.ids_to_tokens[int(i)] )
+                markovs.append( self.harmony_tokenizer.make_markov_from_tokens_list(harmony_tokens) )
+        return torch.tensor( markovs )
     # end make_markov_from_tokens_list
 
 # end class MergedMelHarmTokenizer
