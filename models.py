@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GATConv
 from torch_geometric.data import Data, Batch
+from copy import deepcopy
 
 class GraphConditioningModule(nn.Module):
     def __init__(self, hidden_dim, out_dim, use_attention=False):
@@ -263,7 +264,7 @@ class TransGraphVAE(nn.Module):
         return recon_loss + kl_loss, recon_loss, kl_loss
     # end compute_loss
 
-    def forward(self, x, transitions, encoder_attention=None, generate_max_tokens=-1, temperature=1.0):
+    def forward(self, x, transitions, encoder_attention=None, generate_max_tokens=-1, num_bars=-1, temperature=1.0):
         input_ids = x
         x = self.t_encoder(x).last_hidden_state
         recon_x, mu, logvar  = self.cvae(x, transitions)
@@ -276,9 +277,9 @@ class TransGraphVAE(nn.Module):
             if encoder_attention is None:
                 encoder_attention = (input_ids != self.transformer.config.pad_token_id)
             print('recon generation')
-            g_recon = self.generate(recon_x, encoder_attention, generate_max_tokens, temperature)
+            g_recon = self.generate(recon_x, encoder_attention, generate_max_tokens, num_bars, temperature)
             print('normal generation')
-            g = self.generate(x, encoder_attention, generate_max_tokens, temperature)
+            g = self.generate(x, encoder_attention, generate_max_tokens, num_bars, temperature)
             generated_markov = None
             recon_markov = None
             if self.tokenizer is not None:
@@ -297,21 +298,17 @@ class TransGraphVAE(nn.Module):
         }
     # end forward
 
-    def generate(self, encoder_hidden_states, encoder_attention, max_length, temperature):
+    def generate(self, encoder_hidden_states, encoder_attention, max_length, num_bars, temperature):
         batch_size = encoder_hidden_states.shape[0]
         bos_token_id = self.transformer.config.bos_token_id
         eos_token_id = self.transformer.config.eos_token_id
-        # if self.tokenizer is None:
-        #     bos_token_id = self.transformer.config.bos_token_id
-        #     eos_token_id = self.transformer.config.eos_token_id
-        # else:
-        #     bos_token_id = self.tokenizer.vocab[self.tokenizer.harmony_tokenizer.start_harmony_token]
-        #     # bos_token_id = self.transformer.config.bos_token_id
-        #     eos_token_id = self.transformer.config.eos_token_id
+        bar_token_id = -1
+        if self.tokenizer is not None:
+            bar_token_id = self.tokenizer.vocab['<bar>']
+        bars_left = deepcopy(num_bars)
         decoder_input_ids = torch.full((batch_size, 1), bos_token_id, dtype=torch.long).to(self.device)  # (batch_size, 1)
         # Track finished sequences
         finished = torch.zeros(batch_size, dtype=torch.bool).to(self.device)  # (batch_size,)
-        print('decoder_input_ids:', decoder_input_ids)
         for _ in range(max_length):
             # Pass through the decoder
             decoder_outputs = self.t_decoder(
@@ -322,12 +319,21 @@ class TransGraphVAE(nn.Module):
 
             # Get the logits of the last generated token
             logits = self.transformer.lm_head(decoder_outputs.last_hidden_state[:, -1, :])  # (batch_size, vocab_size)
+            print('bars_left:', bars_left)
+            # For the batch that has some bars left, zero out the eos_token_id logit
+            # For the batch that has 0 bars left, zero out the bar token
+            if bars_left != -1 and bar_token_id != -1:
+                logits[ bars_left[:,0] > 0 , eos_token_id ] = 0
+                logits[ bars_left[:,0] <= 0 , bar_token_id ] = 0
 
             # Apply temperature scaling and softmax
             probs = F.softmax(logits / temperature, dim=-1)  # (batch_size, vocab_size)
 
             # Sample next token
             next_token_ids = torch.multinomial(probs, num_samples=1)  # (batch_size, 1)
+
+            if bars_left != -1 and bar_token_id != -1:
+                bars_left[ next_token_ids == bar_token_id ] -= 1
 
             # Stop condition: mask finished sequences
             finished |= next_token_ids.squeeze(1) == eos_token_id

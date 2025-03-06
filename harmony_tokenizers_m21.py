@@ -625,7 +625,7 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
         for ids in harmony_token_ids:
             harmony_tokens = []
             for i in ids:
-                harmony_tokens.append( self.harmony_tokenizer.ids_to_tokens[int(i)] )
+                harmony_tokens.append( self.ids_to_tokens[int(i)] )
                 markovs.append( self.harmony_tokenizer.make_markov_from_tokens_list(harmony_tokens) )
         return torch.tensor( markovs )
     # end make_markov_from_tokens_list
