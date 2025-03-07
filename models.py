@@ -1,12 +1,16 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, GATConv
+from torch_geometric.nn import GCNConv, GATConv, global_mean_pool
 from torch_geometric.data import Data, Batch
 from copy import deepcopy
+import pickle
+
+with open('data/chord_node_features.pickle', 'rb') as f:
+    chord_node_features = pickle.load(f)
 
 class GraphConditioningModule(nn.Module):
-    def __init__(self, hidden_dim, out_dim, use_attention=False):
+    def __init__(self, hidden_dim, out_dim, use_attention=False, device=torch.device('cpu')):
         """
         Graph-based conditioning module for extracting node embeddings as condition vectors.
 
@@ -18,18 +22,19 @@ class GraphConditioningModule(nn.Module):
         super(GraphConditioningModule, self).__init__()
 
         self.use_attention = use_attention
+        self.device = device
+
+        self.chord_node_features = torch.Tensor(chord_node_features).to(self.device)
         
         if use_attention:
-            self.gnn1 = GATConv(1, hidden_dim)
-            self.gnn2 = GATConv(hidden_dim, hidden_dim)
+            self.gnn1 = GATConv(self.chord_node_features.shape[1], hidden_dim).to(self.device)
+            self.gnn2 = GATConv(hidden_dim, out_dim).to(self.device)
         else:
-            self.gnn1 = GCNConv(1, hidden_dim)
-            self.gnn2 = GCNConv(hidden_dim, hidden_dim)
-
-        self.fc = nn.Linear(hidden_dim, out_dim)
+            self.gnn1 = GCNConv(self.chord_node_features.shape[1], hidden_dim).to(self.device)
+            self.gnn2 = GCNConv(hidden_dim, out_dim).to(self.device)
     # end init
 
-    def forward(self, batch_graph, node_indices):
+    def forward(self, batch_graph):
         """
         Args:
             batch_graph (Batch): Batched graph object from PyG
@@ -38,15 +43,19 @@ class GraphConditioningModule(nn.Module):
         Returns:
             condition_vectors (torch.Tensor): Shape (batch_size, out_dim)
         """
-        x = torch.ones((batch_graph.num_nodes, 1), device=batch_graph.edge_index.device)  # Dummy features
+        edge_index = batch_graph.edge_index.to(self.device)
+        edge_attr = batch_graph.edge_attr.to(self.device)
+        node_indices = batch_graph.node_indices.to(self.device)
+        batch_index = batch_graph.batch.to(self.device)  # Node-to-batch mapping
+        # x = torch.ones((batch_graph.num_nodes, 1), device=batch_graph.edge_index.device)  # Dummy features
+        x = self.chord_node_features[node_indices].to(self.device)  # Shape: (num_nodes_in_batch, 12 or whatever)
 
-        x = F.relu(self.gnn1(x, batch_graph.edge_index))
-        x = F.relu(self.gnn2(x, batch_graph.edge_index))
-        
-        node_embeddings = x[node_indices]  # Shape: (batch_size, hidden_dim)
-        condition_vectors = self.fc(node_embeddings)  # Shape: (batch_size, out_dim)
+        x = F.relu(self.gnn1(x, edge_index, edge_attr)).to(self.device)
+        x = F.relu(self.gnn2(x, edge_index, edge_attr)).to(self.device)
 
-        return condition_vectors
+        # Aggregate node embeddings per batch
+        x = global_mean_pool(x, batch_index).to(self.device)  # (batch_size, output_dim)
+        return x
     # end forward
 # end class GraphConditioningModule
 
@@ -108,7 +117,7 @@ class BiLSTMDecoder(nn.Module):
 # end class BiLSTMDecoder
 
 class CVAE(nn.Module):
-    def __init__(self, transformer_dim, **config):
+    def __init__(self, transformer_dim, device=torch.device('cpu'), **config):
         """
         CVAE model integrating BiLSTM encoder-decoder and GNN-based conditioning.
 
@@ -137,11 +146,13 @@ class CVAE(nn.Module):
             condition_dim = config['condition_dim']
         if 'use_attention' in config.keys():
             use_attention = config['use_attention']
+        self.device = device
         
         self.lstm_encoder = BiLSTMEncoder(transformer_dim, hidden_dim_LSTM)
         self.lstm_decoder = BiLSTMDecoder(hidden_dim_LSTM, transformer_dim)
 
-        self.graph_conditioning = GraphConditioningModule(hidden_dim_GNN, condition_dim, use_attention=use_attention)
+        self.graph_conditioning = GraphConditioningModule(hidden_dim_GNN, \
+                            condition_dim, use_attention=use_attention, device=self.device)
 
         # Latent space transformations
         self.fc_mu = nn.Linear(hidden_dim_LSTM + condition_dim, latent_dim)
@@ -168,29 +179,38 @@ class CVAE(nn.Module):
             node_indices (torch.Tensor): (batch_size,) tensor containing a node index per sample
         """
         batch_size, num_nodes, _ = markov_matrices.shape
-        graphs = []
+        edge_indices = []
+        edge_attrs = []
         node_indices = []
+        batch_indices = []
 
-        for b in range(batch_size):
-            # Extract nonzero entries (source, target) where transition probability > 0
-            source_nodes, target_nodes = torch.nonzero(markov_matrices[b], as_tuple=True)
-            edge_probs = markov_matrices[b][source_nodes, target_nodes]  # Extract transition probabilities
+        for batch_idx in range(batch_size):
+            matrix = markov_matrices[batch_idx]
 
-            # Create edge_index
-            edge_index = torch.stack([source_nodes, target_nodes], dim=0)  # Shape (2, num_edges)
-            
-            # Create graph data object
-            graph = Data(edge_index=edge_index, edge_attr=edge_probs, num_nodes=num_nodes)
-            graphs.append(graph)
+            # Get nonzero indices (edges) and weights (edge attributes)
+            edges = torch.nonzero(matrix, as_tuple=False).T  # Shape: (2, num_edges)
+            weights = matrix[edges[0], edges[1]]  # Edge weights
 
-            # Select a random node to condition on (or use a rule)
-            node_indices.append(torch.randint(0, num_nodes, (1,)))
+            # Append edges and attributes
+            edge_indices.append(edges)
+            edge_attrs.append(weights)
 
-        # Batch all graphs into a single PyG Batch object
-        batch_graph = Batch.from_data_list(graphs)
-        node_indices = torch.cat(node_indices)  # Shape (batch_size,)
+            # Node indices (all nodes in this graph)
+            node_indices.append(torch.arange(num_nodes, dtype=torch.long))
 
-        return batch_graph, node_indices
+            # Batch assignment for nodes
+            batch_indices.append(torch.full((num_nodes,), batch_idx, dtype=torch.long))
+
+        # Concatenate to form a single large batched graph
+        edge_index = torch.cat(edge_indices, dim=1)  # Shape: (2, total_edges)
+        edge_attr = torch.cat(edge_attrs, dim=0)  # Shape: (total_edges,)
+        node_indices = torch.cat(node_indices, dim=0)  # Shape: (total_nodes,)
+        batch_index = torch.cat(batch_indices, dim=0)  # Shape: (total_nodes,)
+
+        # Create batched PyG Data object
+        batched_graph = Data(edge_index=edge_index, edge_attr=edge_attr, node_indices=node_indices, batch=batch_index)
+
+        return batched_graph
     # end build_batch_graphs
 
     def forward(self, x, transitions):
@@ -205,8 +225,8 @@ class CVAE(nn.Module):
             logvar (torch.Tensor): Log variance of latent distribution
         """
         h = self.lstm_encoder(x)  # Shape: (batch_size, hidden_dim)
-        batch_graph, node_indices = self.build_batch_graphs( transitions )
-        condition = self.graph_conditioning(batch_graph, node_indices)  # Shape: (batch_size, condition_dim)
+        batched_graph = self.build_batch_graphs( transitions )
+        condition = self.graph_conditioning(batched_graph)  # Shape: (batch_size, condition_dim)
 
         h_cond = torch.cat([h, condition], dim=-1)  # Shape: (batch_size, hidden_dim_LSTM + condition_dim)
 
@@ -238,8 +258,8 @@ class TransGraphVAE(nn.Module):
         self.transformer = transformer
         self.t_encoder = transformer.model.encoder
         self.t_decoder = transformer.model.decoder
-        self.cvae = CVAE(self.transformer.config.d_model, **config)
         self.device = device
+        self.cvae = CVAE(self.transformer.config.d_model, device=self.device, **config)
         self.tokenizer = tokenizer
     # end init
 
@@ -271,6 +291,8 @@ class TransGraphVAE(nn.Module):
         total_loss, recon_loss, kl_loss = self.compute_loss(recon_x, x, mu, logvar)
         g_recon = None
         g = None
+        generated_markov = None
+        recon_markov = None
         if generate_max_tokens > 0:
             # autoregressive process with temperature
             # output from reconstruction
@@ -280,8 +302,6 @@ class TransGraphVAE(nn.Module):
             g_recon = self.generate(recon_x, encoder_attention, generate_max_tokens, num_bars, temperature)
             print('normal generation')
             g = self.generate(x, encoder_attention, generate_max_tokens, num_bars, temperature)
-            generated_markov = None
-            recon_markov = None
             if self.tokenizer is not None:
                 generated_markov = self.tokenizer.make_markov_from_token_ids_tensor(g)
                 recon_markov = self.tokenizer.make_markov_from_token_ids_tensor(g_recon)

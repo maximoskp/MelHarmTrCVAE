@@ -34,6 +34,7 @@ train_dataset = SeparatedMelHarmMarkovDataset(train_dir, tokenizer, max_length=5
 test_dataset = SeparatedMelHarmMarkovDataset(test_dir, tokenizer, max_length=512, num_bars=64)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cpu")
 
 bart_config = BartConfig(
     vocab_size=len(tokenizer.vocab),
@@ -98,7 +99,7 @@ config = {
     'use_attention': False
 }
 
-model = TransGraphVAE(transformer=bart, **config)
+model = TransGraphVAE(transformer=bart, device=device, **config)
 model.to(device)
 
 model.cvae.train()
