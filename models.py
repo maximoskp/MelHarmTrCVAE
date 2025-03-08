@@ -311,8 +311,8 @@ class TransGraphVAE(nn.Module):
             'kl_loss': kl_loss,
             'x': x,
             'recon_x': recon_x,
-            'generated_ids': g_recon,
-            'generated_recon_ids': g,
+            'generated_ids': g,
+            'generated_recon_ids': g_recon,
             'generated_markov': generated_markov,
             'recon_markov': recon_markov
         }
