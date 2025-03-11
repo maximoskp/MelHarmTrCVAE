@@ -10,6 +10,65 @@ from transformers import DataCollatorForSeq2Seq
 import mir_eval
 from copy import deepcopy
 
+class SeparatedMelHarmTextDataset(Dataset):
+    def __init__(self, root_dir, merged_tokenizer, max_length=512, pad_to_max_length=True, \
+                return_attention_mask=False, num_bars=8, description_mode='specific_chord'):
+        # root_dir: the directory that includes subdirectories with mlx or xml files
+        # Walk through all subdirectories and files
+        # description_modes: 'chord_root', 'specific_chord' (root+type), 'pitch_class'
+        self.data_files = []
+        for dirpath, _, filenames in os.walk(root_dir):
+            for file in filenames:
+                if file.endswith('.xml') or file.endswith('.mxl'):
+                    full_path = os.path.join(dirpath, file)
+                    self.data_files.append(full_path)
+        self.merged_tokenizer = merged_tokenizer
+        self.max_length = max_length
+        self.pad_to_max_length = pad_to_max_length
+        self.num_bars = num_bars
+        self.return_attention_mask = return_attention_mask
+        self.description_mode = description_mode
+    # end init
+
+    def __len__(self):
+        return len(self.data_files)
+    # end len
+
+    def __getitem__(self, idx):
+        data_file = self.data_files[idx]
+        # adjust number of bars based no maximum length
+        if self.max_length is not None and self.num_bars is not None:
+            tmp_encoded_len = self.max_length + 1
+            curr_num_bars = self.num_bars
+            while tmp_encoded_len > self.max_length:
+                encoded = self.merged_tokenizer.encode(data_file, max_length=self.max_length,\
+                                pad_to_max_length=self.pad_to_max_length, num_bars=curr_num_bars)
+                tmp_encoded_len = len(encoded['input_ids'])
+                curr_num_bars -= 1
+        else:
+            encoded = self.merged_tokenizer.encode(data_file, max_length=self.max_length,\
+                            pad_to_max_length=self.pad_to_max_length, num_bars=self.num_bars)
+        # separate melody from harmony
+        labels = torch.tensor(encoded['input_ids']).clone()
+        start_harmony_position = np.where( np.array(encoded['input_ids']) == self.merged_tokenizer.vocab[self.merged_tokenizer.harmony_tokenizer.start_harmony_token] )[0][0]
+        input_ids = torch.tensor(encoded['input_ids'][:start_harmony_position], dtype=torch.long)
+        attention_mask = torch.tensor(encoded['attention_mask'][:start_harmony_position], dtype=torch.long)
+        labels = labels[start_harmony_position:]  # Ignore question tokens and <h> in loss computation
+        labels[ labels == self.merged_tokenizer.pad_token_id ] = -100
+        # make description of specific (e.g., the third) bar
+        txt = self.merged_tokenizer.make_description_of_tokens_list_at_random_bar(
+            encoded['input_tokens'][start_harmony_position:],
+            self.description_mode
+        )
+        return {
+            'input_ids': input_ids,
+            'attention_mask': attention_mask,
+            'labels': labels,
+            'txt': txt
+        }
+    # end getitem
+# end class dataset
+
 class SeparatedMelHarmMarkovDataset(Dataset):
     def __init__(self, root_dir, merged_tokenizer, max_length=512, pad_to_max_length=True, \
                 return_attention_mask=False, num_bars=8):

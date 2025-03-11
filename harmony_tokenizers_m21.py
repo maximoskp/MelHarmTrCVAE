@@ -223,6 +223,10 @@ class HarmonyTokenizerBase(PreTrainedTokenizer):
         raise NotImplementedError()
     # end make_markov_from_tokens_list
 
+    def make_description_of_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
+        raise NotImplementedError()
+    # end make_description_of_tokens_list_at_random_bar
+
     def fit(self, corpus):
         pass
     # end fit
@@ -626,10 +630,24 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
             harmony_tokens = []
             for i in ids:
                 harmony_tokens.append( self.ids_to_tokens[int(i)] )
-                markovs.append( self.harmony_tokenizer.make_markov_from_tokens_list(harmony_tokens) )
+            markovs.append( self.harmony_tokenizer.make_markov_from_tokens_list(harmony_tokens) )
         return torch.tensor( markovs )
-    # end make_markov_from_tokens_list
+    # end make_markov_from_token_ids_tensor
 
+    def make_description_of_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
+        return self.harmony_tokenizer.make_description_of_tokens_list_at_random_bar(harmony_tokens, description_mode)
+    # end make_description_of_tokens_list_at_random_bar
+
+    def make_description_of_token_ids_tensor_at_random_bar(self, harmony_token_ids, description_mode):
+        txts = []
+        for ids in harmony_token_ids:
+            harmony_tokens = []
+            for i in ids:
+                harmony_tokens.append( self.ids_to_tokens[int(i)] )
+            txts.append( self.harmony_tokenizer.make_description_of_tokens_list_at_random_bar(
+                harmony_tokens, description_mode) )
+        return torch.tensor( txts )
+    # end make_description_of_token_ids_tensor_at_random_bar
 # end class MergedMelHarmTokenizer
 
 class ChordSymbolTokenizer(HarmonyTokenizerBase):
@@ -742,6 +760,76 @@ class ChordSymbolTokenizer(HarmonyTokenizerBase):
         return m/row_sums[:, np.newaxis]
     # end make_markov_from_tokens_list
 
+    def make_description_of_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
+        # description_mode in: 'chord_root', 'specific_chord' (root+type), 'pitch_class'
+        # count how many bars and pick one at random
+        num_bars = harmony_tokens.count('<bar>')
+        # get a random bar among them
+        rand_bar_num = np.random.randint(num_bars)
+        # get bar index
+        # Find indices of all occurrences
+        indices = [i for i, val in enumerate(harmony_tokens) if val == '<bar>']
+        # Get the index of the rand_bar_num occurrence (zero-based index)
+        if len(indices) > rand_bar_num+1:
+            bar_index = indices[rand_bar_num]
+            next_bar_index = indices[rand_bar_num+1]
+        else:
+            # check if there are any bars at all
+            if len(indices) == 0:
+                return 'This piece has no bars.'
+            # the last bar
+            bar_index = indices[-1]
+            next_bar_index = len(harmony_tokens)
+        # get all tokens between rand_bar and its next
+        bar_tokens = harmony_tokens[bar_index:]
+        # start with the same initial description for all description modes
+        txt = f'Bar number {rand_bar_num} begins with a '
+        # make description according to description_mode
+        chord_token = None
+        if description_mode == 'specific_chord':
+            # check if bar has a chord
+            for i in range(len(bar_tokens)):
+                if 'position_' in bar_tokens[i]:
+                    if i+1 < len(bar_tokens):
+                        chord_token = bar_tokens[i+1]
+                    break
+            if chord_token is not None:
+                txt += f'{chord_token} chord.'
+            else:
+                txt = f'Bar number {rand_bar_num} has no chords.'
+        elif description_mode == 'chord_root':
+            # check if bar has a chord
+            for i in range(len(bar_tokens)):
+                if 'position_' in bar_tokens[i]:
+                    if i+1 < len(bar_tokens):
+                        chord_token = bar_tokens[i+1]
+                    break
+            if chord_token is not None:
+                root_part = chord_token.split(':')[0]
+                txt += f'{root_part} root.'
+            else:
+                txt = f'Bar number {rand_bar_num} has no chords.'
+        elif description_mode == 'pitch_class':
+            # check if bar has a chord
+            for i in range(len(bar_tokens)):
+                if 'position_' in bar_tokens[i]:
+                    if i+1 < len(bar_tokens):
+                        chord_token = bar_tokens[i+1]
+                    break
+            if chord_token is not None:
+                root, semitone_bitmap, _ = mir_eval.chord.encode( chord_token, reduce_extended_chords=True )
+                pcp = np.roll(semitone_bitmap, root)
+                # get a random pc
+                pc = np.random.choice(np.nonzero(pcp)[0])
+                txt += f'chord with a { INT_TO_ROOT_SHARP[pc] } pitch class.'
+            else:
+                txt = f'Bar number {rand_bar_num} has no chords.'
+        else:
+            print(f'No such description mode: {description_mode}.')
+            txt = f'Bar number {rand_bar_num} has no chords.'
+        return txt
+    # end make_description_of_tokens_list_at_random_bar
+
 # end class ChordSymbolTokenizer
 
 class RootTypeTokenizer(HarmonyTokenizerBase):
@@ -817,6 +905,10 @@ class RootTypeTokenizer(HarmonyTokenizerBase):
         print('Not implemented yet for ', self.__class__.__name__)
     # end make_markov_from_tokens_list
 
+    def make_description_of_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
+        print('Not implemented yet for ', self.__class__.__name__)
+    # end make_description_of_tokens_list_at_random_bar
+
 # end class RootTypeTokenizer
 
 class PitchClassTokenizer(HarmonyTokenizerBase):
@@ -870,6 +962,10 @@ class PitchClassTokenizer(HarmonyTokenizerBase):
     def make_markov_from_tokens_list(self, harmony_tokens):
         print('Not implemented yet for ', self.__class__.__name__)
     # end make_markov_from_tokens_list
+
+    def make_description_of_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
+        print('Not implemented yet for ', self.__class__.__name__)
+    # end make_description_of_tokens_list_at_random_bar
 
 # end class PitchClassTokenizer
 
@@ -931,6 +1027,10 @@ class RootPCTokenizer(HarmonyTokenizerBase):
         print('Not implemented yet for ', self.__class__.__name__)
     # end make_markov_from_tokens_list
 
+    def make_description_of_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
+        print('Not implemented yet for ', self.__class__.__name__)
+    # end make_description_of_tokens_list_at_random_bar
+
 # end class RootPCTokenizer
 
 class GCTRootPCTokenizer(HarmonyTokenizerBase):
@@ -988,6 +1088,10 @@ class GCTRootPCTokenizer(HarmonyTokenizerBase):
     def make_markov_from_tokens_list(self, harmony_tokens):
         print('Not implemented yet for ', self.__class__.__name__)
     # end make_markov_from_tokens_list
+
+    def make_description_of_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
+        print('Not implemented yet for ', self.__class__.__name__)
+    # end make_description_of_tokens_list_at_random_bar
 
 # end class GCTRootPCTokenizer
 
@@ -1072,6 +1176,10 @@ class GCTSymbolTokenizer(HarmonyTokenizerBase):
     def make_markov_from_tokens_list(self, harmony_tokens):
         print('Not implemented yet for ', self.__class__.__name__)
     # end make_markov_from_tokens_list
+
+    def make_description_of_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
+        print('Not implemented yet for ', self.__class__.__name__)
+    # end make_description_of_tokens_list_at_random_bar
 
 # end class GCTSymbolTokenizer
 
@@ -1167,6 +1275,10 @@ class GCTRootTypeTokenizer(HarmonyTokenizerBase):
     def make_markov_from_tokens_list(self, harmony_tokens):
         print('Not implemented yet for ', self.__class__.__name__)
     # end make_markov_from_tokens_list
+
+    def make_description_of_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
+        print('Not implemented yet for ', self.__class__.__name__)
+    # end make_description_of_tokens_list_at_random_bar
 
 # end class GCTRootTypeTokenizer
 
