@@ -11,7 +11,7 @@ import mir_eval
 from copy import deepcopy
 
 class SeparatedMelHarmTextDataset(Dataset):
-    def __init__(self, root_dir, merged_tokenizer, max_length=512, pad_to_max_length=True, \
+    def __init__(self, root_dir, merged_tokenizer, text_tokenizer, max_length=512, pad_to_max_length=True, \
                 return_attention_mask=False, num_bars=8, description_mode='specific_chord'):
         # root_dir: the directory that includes subdirectories with mlx or xml files
         # Walk through all subdirectories and files
@@ -23,6 +23,7 @@ class SeparatedMelHarmTextDataset(Dataset):
                     full_path = os.path.join(dirpath, file)
                     self.data_files.append(full_path)
         self.merged_tokenizer = merged_tokenizer
+        self.text_tokenizer = text_tokenizer
         self.max_length = max_length
         self.pad_to_max_length = pad_to_max_length
         self.num_bars = num_bars
@@ -60,14 +61,48 @@ class SeparatedMelHarmTextDataset(Dataset):
             encoded['input_tokens'][start_harmony_position:],
             self.description_mode
         )
+        tokenized_txt = self.text_tokenizer(txt, padding=True, truncation=True, return_tensors="pt")
         return {
             'input_ids': input_ids,
             'attention_mask': attention_mask,
             'labels': labels,
-            'txt': txt
+            'txt_ids': tokenized_txt['input_ids'][0],
+            'txt_attention': tokenized_txt['attention_mask'][0],
         }
     # end getitem
 # end class dataset
+
+class MelHarmTextCollatorForSeq2Seq(DataCollatorForSeq2Seq):
+    def __init__(self, tokenizer, model, text_tokenizer, padding=True):
+        super().__init__(tokenizer=tokenizer, model=model, padding=padding)
+        self.text_tokenizer = text_tokenizer
+    # end init
+
+    def __call__(self, features):
+        standard_features = [
+            {k: v for k, v in f.items() if k in ["input_ids", "attention_mask", "labels"]}
+            for f in features
+        ]
+        # Process main tokenizer fields
+        batch = super().__call__(standard_features)
+
+        # Process 'txt_ids' and 'txt_attention' using the text_tokenizer
+        txt_inputs = [f["txt_ids"] for f in features]
+        txt_attention_masks = [f["txt_attention"] for f in features]
+
+        # Pad 'txt_ids' and 'txt_attention' manually
+        txt_padded = self.text_tokenizer.pad(
+            {"input_ids": txt_inputs, "attention_mask": txt_attention_masks},
+            padding=True,
+            return_tensors="pt"
+        )
+
+        batch["txt_ids"] = txt_padded["input_ids"]
+        batch["txt_attention"] = txt_padded["attention_mask"]
+
+        return batch
+    # end call
+# end MelHarmTextCollatorForSeq2Seq
 
 class SeparatedMelHarmMarkovDataset(Dataset):
     def __init__(self, root_dir, merged_tokenizer, max_length=512, pad_to_max_length=True, \

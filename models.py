@@ -5,6 +5,107 @@ from torch_geometric.nn import GCNConv, GATConv, global_mean_pool
 from torch_geometric.data import Data, Batch
 from copy import deepcopy
 import pickle
+import torch
+import torch.nn as nn
+from transformers import RobertaModel, RobertaTokenizer
+
+class LSTMCVAE_RoBERTa(nn.Module):
+    def __init__(self, hidden_dim, latent_dim, lstm_dim, roberta_model="roberta-base", freeze_roberta=True):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.latent_dim = latent_dim
+        self.lstm_dim = lstm_dim
+
+        # Load RoBERTa
+        self.roberta = RobertaModel.from_pretrained(roberta_model)
+        self.tokenizer = RobertaTokenizer.from_pretrained(roberta_model)
+
+        if freeze_roberta:
+            for param in self.roberta.parameters():
+                param.requires_grad = False  # Keep it frozen
+
+        roberta_dim = self.roberta.config.hidden_size  # Usually 768 for RoBERTa-base
+
+        # LSTM for Processing RoBERTa Outputs (Newly Added)
+        self.condition_lstm = nn.LSTM(roberta_dim, lstm_dim, batch_first=True, bidirectional=True)
+        self.condition_fc = nn.Linear(lstm_dim * 2, roberta_dim)  # Project back to RoBERTa's dimension
+
+        # LSTM Encoder for CVAE
+        self.lstm_encoder = nn.LSTM(hidden_dim + roberta_dim, lstm_dim, batch_first=True, bidirectional=True)
+
+        # Latent Space
+        self.fc_mu = nn.Linear(lstm_dim * 2, latent_dim)
+        self.fc_logvar = nn.Linear(lstm_dim * 2, latent_dim)
+
+        # LSTM Decoder
+        self.lstm_decoder = nn.LSTM(latent_dim + roberta_dim, lstm_dim, batch_first=True, bidirectional=True)
+
+        # Output Projection to Reconstruct Encoder Hidden States
+        self.decoder_fc = nn.Linear(lstm_dim * 2, hidden_dim)
+    # end init
+
+    def reparameterize(self, mu, logvar):
+        """ VAE Reparameterization Trick """
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+    # end reparameterize
+
+    def encode_condition(self, text_conditions, device):
+        """ Tokenize and encode text conditions using RoBERTa and an LSTM """
+        roberta_inputs = self.tokenizer(
+            text_conditions, padding=True, truncation=True, return_tensors="pt"
+        ).to(device)
+        
+        with torch.no_grad():  # Freeze RoBERTa (unless fine-tuning)
+            roberta_outputs = self.roberta(**roberta_inputs)
+
+        roberta_seq_output = roberta_outputs.last_hidden_state  # (batch, seq_len, roberta_dim)
+
+        # Pass through LSTM to model sequential dependencies
+        lstm_out, (h_n, _) = self.condition_lstm(roberta_seq_output)
+        
+        # Use the last hidden state from the LSTM
+        condition_embedding = self.condition_fc(h_n[-1])  # (batch, roberta_dim)
+
+        return condition_embedding
+    # end encode_condition
+
+    def forward(self, encoder_hidden_states, text_conditions, device):
+        batch_size, seq_len, _ = encoder_hidden_states.shape
+
+        # Encode Condition with RoBERTa + LSTM
+        roberta_embeddings = self.encode_condition(text_conditions, device)
+
+        # Expand RoBERTa embeddings across the sequence
+        roberta_embeddings = roberta_embeddings.unsqueeze(1).expand(-1, seq_len, -1)  # (batch, seq_len, roberta_dim)
+
+        # Concatenate Encoder Output + RoBERTa Condition
+        lstm_input = torch.cat([encoder_hidden_states, roberta_embeddings], dim=-1)
+
+        # Encode with LSTM
+        lstm_output, _ = self.lstm_encoder(lstm_input)
+
+        # Compute Latent Variables
+        mu = self.fc_mu(lstm_output[:, -1, :])  # Last timestep hidden state
+        logvar = self.fc_logvar(lstm_output[:, -1, :])
+        z = self.reparameterize(mu, logvar).unsqueeze(1).expand(-1, seq_len, -1)  # Repeat across sequence
+
+        # Concatenate Latent Vector + RoBERTa Condition
+        z = torch.cat([z, roberta_embeddings], dim=-1)
+
+        # Decode with LSTM
+        lstm_decoded, _ = self.lstm_decoder(z)
+
+        # Reconstruct Encoder Hidden States
+        reconstructed = self.decoder_fc(lstm_decoded)
+
+        return reconstructed, mu, logvar
+    # end forward
+# end class LSTMCVAE_RoBERTa
+
+# ===================================================
+# GNN
 
 with open('data/chord_node_features.pickle', 'rb') as f:
     chord_node_features = pickle.load(f)
