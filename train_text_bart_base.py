@@ -144,7 +144,7 @@ def main():
     optimizer = AdamW(model.cvae.parameters(), lr=lr)
 
     # save results
-    os.makedirs('results/bart_text_cvae/'+tokenizer_name+'/'+description_mode, exist_ok=True)
+    os.makedirs('results/bart_text_cvae/'+tokenizer_name+'/', exist_ok=True)
     results_path = 'results/bart_text_cvae/' + tokenizer_name+'/'+description_mode + '.csv'
     result_fields = ['epoch', 'train_loss', 'val_loss', 'sav_version']
     with open( results_path, 'w' ) as f:
