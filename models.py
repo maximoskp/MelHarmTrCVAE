@@ -10,8 +10,21 @@ import torch.nn as nn
 from transformers import RobertaModel, RobertaTokenizer
 
 class LSTMCVAE_RoBERTa(nn.Module):
-    def __init__(self, hidden_dim, latent_dim, lstm_dim, roberta_model="roberta-base", freeze_roberta=True):
+    def __init__(self, hidden_dim, device=torch.device('cpu'), **config):
         super().__init__()
+        lstm_dim = 256
+        roberta_model = "roberta-base"
+        latent_dim = 256
+        freeze_roberta = True
+        if 'lstm_dim' in config.keys():
+            hidden_dim_LSTM = config['lstm_dim']
+        if 'roberta_model' in config.keys():
+            roberta_model = config['roberta_model']
+        if 'latent_dim' in config.keys():
+            latent_dim = config['latent_dim']
+        if 'freeze_roberta' in config.keys():
+            freeze_roberta = config['freeze_roberta']
+        self.device = device
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
         self.lstm_dim = lstm_dim
@@ -26,9 +39,9 @@ class LSTMCVAE_RoBERTa(nn.Module):
 
         roberta_dim = self.roberta.config.hidden_size  # Usually 768 for RoBERTa-base
 
-        # LSTM for Processing RoBERTa Outputs (Newly Added)
+        # LSTM for Processing RoBERTa Outputs
         self.condition_lstm = nn.LSTM(roberta_dim, lstm_dim, batch_first=True, bidirectional=True)
-        self.condition_fc = nn.Linear(lstm_dim * 2, roberta_dim)  # Project back to RoBERTa's dimension
+        self.condition_fc = nn.Linear(lstm_dim, roberta_dim)  # Project back to RoBERTa's dimension
 
         # LSTM Encoder for CVAE
         self.lstm_encoder = nn.LSTM(hidden_dim + roberta_dim, lstm_dim, batch_first=True, bidirectional=True)
@@ -51,12 +64,12 @@ class LSTMCVAE_RoBERTa(nn.Module):
         return mu + eps * std
     # end reparameterize
 
-    def encode_condition(self, text_conditions, device):
+    def encode_condition(self, texts):
         """ Tokenize and encode text conditions using RoBERTa and an LSTM """
         roberta_inputs = self.tokenizer(
-            text_conditions, padding=True, truncation=True, return_tensors="pt"
-        ).to(device)
-        
+            texts, padding=True, truncation=True, return_tensors="pt"
+        ).to(self.device)
+
         with torch.no_grad():  # Freeze RoBERTa (unless fine-tuning)
             roberta_outputs = self.roberta(**roberta_inputs)
 
@@ -71,11 +84,11 @@ class LSTMCVAE_RoBERTa(nn.Module):
         return condition_embedding
     # end encode_condition
 
-    def forward(self, encoder_hidden_states, text_conditions, device):
+    def forward(self, encoder_hidden_states, texts):
         batch_size, seq_len, _ = encoder_hidden_states.shape
 
         # Encode Condition with RoBERTa + LSTM
-        roberta_embeddings = self.encode_condition(text_conditions, device)
+        roberta_embeddings = self.encode_condition(texts)
 
         # Expand RoBERTa embeddings across the sequence
         roberta_embeddings = roberta_embeddings.unsqueeze(1).expand(-1, seq_len, -1)  # (batch, seq_len, roberta_dim)
@@ -103,6 +116,131 @@ class LSTMCVAE_RoBERTa(nn.Module):
         return reconstructed, mu, logvar
     # end forward
 # end class LSTMCVAE_RoBERTa
+
+class TransTextVAE(nn.Module):
+    def __init__(self, transformer, device=torch.device('cpu'), tokenizer=None, **config):
+        """
+        TransTextVAE model that involves a RoBERTa-conditioned BiLSTM VAE between a pretrained
+        frozen transformer encoder-decoder.
+
+        Args:
+            t_encoder: frozen encoder of the pretrained transformer
+            t_decoder: frozen encoder of the pretrained transformer
+            **config: arguments for the CVAE module
+        """
+        super(TransTextVAE, self).__init__()
+        self.transformer = transformer
+        self.t_encoder = transformer.model.encoder
+        self.t_decoder = transformer.model.decoder
+        self.device = device
+        self.cvae = LSTMCVAE_RoBERTa(self.transformer.config.d_model, device=self.device, **config)
+        self.tokenizer = tokenizer
+    # end init
+
+    def compute_loss(self, recon_x, x, mu, logvar):
+        """
+        Compute VAE loss (Reconstruction Loss + KL Divergence).
+        
+        Args:
+            recon_x (torch.Tensor): Reconstructed sequences (batch_size, seq_len, transformer_dim)
+            x (torch.Tensor): Ground truth sequences (batch_size, seq_len, transformer_dim)
+            mu (torch.Tensor): Mean of latent distribution (batch_size, latent_dim)
+            logvar (torch.Tensor): Log variance of latent distribution (batch_size, latent_dim)
+        
+        Returns:
+            loss (torch.Tensor): Combined loss
+        """
+        recon_loss = F.mse_loss(recon_x, x, reduction='mean')
+
+        # KL divergence loss
+        kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+
+        return recon_loss + kl_loss, recon_loss, kl_loss
+    # end compute_loss
+
+    def forward(self, x, texts, encoder_attention=None, generate_max_tokens=-1, num_bars=-1, temperature=1.0):
+        input_ids = x
+        x = self.t_encoder(x).last_hidden_state
+        recon_x, mu, logvar  = self.cvae(x, texts)
+        total_loss, recon_loss, kl_loss = self.compute_loss(recon_x, x, mu, logvar)
+        g_recon = None
+        g = None
+        generated_markov = None
+        recon_markov = None
+        if generate_max_tokens > 0:
+            # autoregressive process with temperature
+            # output from reconstruction
+            if encoder_attention is None:
+                encoder_attention = (input_ids != self.transformer.config.pad_token_id)
+            print('recon generation')
+            g_recon = self.generate(recon_x, encoder_attention, generate_max_tokens, num_bars, temperature)
+            print('normal generation')
+            g = self.generate(x, encoder_attention, generate_max_tokens, num_bars, temperature)
+            if self.tokenizer is not None:
+                generated_markov = self.tokenizer.make_markov_from_token_ids_tensor(g)
+                recon_markov = self.tokenizer.make_markov_from_token_ids_tensor(g_recon)
+        return {
+            'loss': total_loss,
+            'recon_loss': recon_loss,
+            'kl_loss': kl_loss,
+            'x': x,
+            'recon_x': recon_x,
+            'generated_ids': g,
+            'generated_recon_ids': g_recon,
+            'generated_markov': generated_markov,
+            'recon_markov': recon_markov
+        }
+    # end forward
+
+    def generate(self, encoder_hidden_states, encoder_attention, max_length, num_bars, temperature):
+        batch_size = encoder_hidden_states.shape[0]
+        bos_token_id = self.transformer.config.bos_token_id
+        eos_token_id = self.transformer.config.eos_token_id
+        bar_token_id = -1
+        if self.tokenizer is not None:
+            bar_token_id = self.tokenizer.vocab['<bar>']
+        bars_left = deepcopy(num_bars)
+        decoder_input_ids = torch.full((batch_size, 1), bos_token_id, dtype=torch.long).to(self.device)  # (batch_size, 1)
+        # Track finished sequences
+        finished = torch.zeros(batch_size, dtype=torch.bool).to(self.device)  # (batch_size,)
+        for _ in range(max_length):
+            # Pass through the decoder
+            decoder_outputs = self.t_decoder(
+                input_ids=decoder_input_ids,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_attention,
+            )
+
+            # Get the logits of the last generated token
+            logits = self.transformer.lm_head(decoder_outputs.last_hidden_state[:, -1, :])  # (batch_size, vocab_size)
+            print('bars_left:', bars_left)
+            # For the batch that has some bars left, zero out the eos_token_id logit
+            # For the batch that has 0 bars left, zero out the bar token
+            if bars_left != -1 and bar_token_id != -1:
+                logits[ bars_left[:,0] > 0 , eos_token_id ] = 0
+                logits[ bars_left[:,0] <= 0 , bar_token_id ] = 0
+
+            # Apply temperature scaling and softmax
+            probs = F.softmax(logits / temperature, dim=-1)  # (batch_size, vocab_size)
+
+            # Sample next token
+            next_token_ids = torch.multinomial(probs, num_samples=1)  # (batch_size, 1)
+
+            if bars_left != -1 and bar_token_id != -1:
+                bars_left[ next_token_ids == bar_token_id ] -= 1
+
+            # Stop condition: mask finished sequences
+            finished |= next_token_ids.squeeze(1) == eos_token_id
+
+            # Append to decoder input
+            decoder_input_ids = torch.cat([decoder_input_ids, next_token_ids], dim=1)  # (batch_size, seq_len)
+
+            # If all sequences are finished, stop early
+            if finished.all():
+                break
+        return decoder_input_ids
+    # end generate
+# end class TransTextVAE
 
 # ===================================================
 # GNN
