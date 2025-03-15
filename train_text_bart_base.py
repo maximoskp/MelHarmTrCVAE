@@ -117,10 +117,7 @@ def main():
     # end create_data_collator
 
     bart_path = 'saved_models/bart/' + tokenizer_name + '/' + tokenizer_name + '.pt'
-    if device == 'cpu':
-        checkpoint = torch.load(bart_path, map_location="cpu", weights_only=True)
-    else:
-        checkpoint = torch.load(bart_path, weights_only=True)
+    checkpoint = torch.load(bart_path, map_location=device_name, weights_only=True)
     bart.load_state_dict(checkpoint)
 
     for param in bart.parameters():
@@ -136,7 +133,7 @@ def main():
         'latent_dim': 2048,
         'freeze_roberta': True
     }
-
+    
     model = TransTextVAE(bart, tokenizer=tokenizer, device=device, config=config)
     model.to(device)
 

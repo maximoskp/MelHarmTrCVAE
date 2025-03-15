@@ -781,7 +781,7 @@ class ChordSymbolTokenizer(HarmonyTokenizerBase):
             bar_index = indices[-1]
             next_bar_index = len(harmony_tokens)
         # get all tokens between rand_bar and its next
-        bar_tokens = harmony_tokens[bar_index:]
+        bar_tokens = harmony_tokens[bar_index:next_bar_index]
         # start with the same initial description for all description modes
         txt = f'Bar number {rand_bar_num} begins with a '
         # make description according to description_mode
@@ -816,7 +816,7 @@ class ChordSymbolTokenizer(HarmonyTokenizerBase):
                     if i+1 < len(bar_tokens):
                         chord_token = bar_tokens[i+1]
                     break
-            if chord_token is not None:
+            if chord_token is not None and chord_token in all_chords.keys():
                 root, semitone_bitmap, _ = mir_eval.chord.encode( chord_token, reduce_extended_chords=True )
                 pcp = np.roll(semitone_bitmap, root)
                 # get a random pc
@@ -906,7 +906,77 @@ class RootTypeTokenizer(HarmonyTokenizerBase):
     # end make_markov_from_tokens_list
 
     def make_description_of_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
-        print('Not implemented yet for ', self.__class__.__name__)
+        # description_mode in: 'chord_root', 'specific_chord' (root+type), 'pitch_class'
+        # count how many bars and pick one at random
+        num_bars = harmony_tokens.count('<bar>')
+        # get a random bar among them
+        rand_bar_num = np.random.randint(num_bars)
+        # get bar index
+        # Find indices of all occurrences
+        indices = [i for i, val in enumerate(harmony_tokens) if val == '<bar>']
+        # Get the index of the rand_bar_num occurrence (zero-based index)
+        if len(indices) > rand_bar_num+1:
+            bar_index = indices[rand_bar_num]
+            next_bar_index = indices[rand_bar_num+1]
+        else:
+            # check if there are any bars at all
+            if len(indices) == 0:
+                return 'This piece has no bars.'
+            # the last bar
+            bar_index = indices[-1]
+            next_bar_index = len(harmony_tokens)
+        # get all tokens between rand_bar and its next
+        bar_tokens = harmony_tokens[bar_index:next_bar_index]
+        # start with the same initial description for all description modes
+        txt = f'Bar number {rand_bar_num} begins with a '
+        # make description according to description_mode
+        chord_token = None
+        if description_mode == 'specific_chord':
+            # check if bar has a chord
+            for i in range(len(bar_tokens)):
+                if 'position_' in bar_tokens[i]:
+                    if i+1 < len(bar_tokens):
+                        chord_token = bar_tokens[i+1]
+                    if i+2 < len(bar_tokens) and bar_tokens[i+2] in EXT_MIR_QUALITIES.keys():
+                        chord_token += ':' + bar_tokens[i+2]
+                    break
+            if chord_token is not None:
+                txt += f'{chord_token} chord.'
+            else:
+                txt = f'Bar number {rand_bar_num} has no chords.'
+        elif description_mode == 'chord_root':
+            # check if bar has a chord
+            for i in range(len(bar_tokens)):
+                if 'position_' in bar_tokens[i]:
+                    if i+1 < len(bar_tokens):
+                        chord_token = bar_tokens[i+1]
+                    break
+            if chord_token is not None and chord_token in ROOT_TO_INT_SHARP.keys():
+                root_part = chord_token
+                txt += f'{root_part} root.'
+            else:
+                txt = f'Bar number {rand_bar_num} has no chords.'
+        elif description_mode == 'pitch_class':
+            # check if bar has a chord
+            for i in range(len(bar_tokens)):
+                if 'position_' in bar_tokens[i]:
+                    if i+1 < len(bar_tokens):
+                        chord_token = bar_tokens[i+1]
+                    if i+2 < len(bar_tokens) and bar_tokens[i+2] in EXT_MIR_QUALITIES.keys():
+                        chord_token += ':' + bar_tokens[i+2]
+                    break
+            if chord_token is not None and chord_token in all_chords.keys():
+                root, semitone_bitmap, _ = mir_eval.chord.encode( chord_token, reduce_extended_chords=True )
+                pcp = np.roll(semitone_bitmap, root)
+                # get a random pc
+                pc = np.random.choice(np.nonzero(pcp)[0])
+                txt += f'chord with a { INT_TO_ROOT_SHARP[pc] } pitch class.'
+            else:
+                txt = f'Bar number {rand_bar_num} has no chords.'
+        else:
+            print(f'No such description mode: {description_mode}.')
+            txt = f'Bar number {rand_bar_num} has no chords.'
+        return txt
     # end make_description_of_tokens_list_at_random_bar
 
 # end class RootTypeTokenizer
