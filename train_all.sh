@@ -1,12 +1,18 @@
 #!/bin/bash
 
 scripts=(
-    "train_text_bart_base.py -t ChordSymbolTokenizer -m specific_chord -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 32"
-    "train_text_bart_base.py -t ChordSymbolTokenizer -m chord_root -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 32"
-    "train_text_bart_base.py -t ChordSymbolTokenizer -m pitch_class -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 32"
-    "train_text_bart_base.py -t RootTypeTokenizer -m specific_chord -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 32"
-    "train_text_bart_base.py -t RootTypeTokenizer -m chord_root -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 32"
-    "train_text_bart_base.py -t RootTypeTokenizer -m pitch_class -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 32"
+    "train_text_bart_base.py -t ChordSymbolTokenizer -m specific_chord -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_text_bart_base.py -t ChordSymbolTokenizer -m chord_root -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_text_bart_base.py -t ChordSymbolTokenizer -m pitch_class -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_text_bart_base.py -t RootTypeTokenizer -m specific_chord -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_text_bart_base.py -t RootTypeTokenizer -m chord_root -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_text_bart_base.py -t RootTypeTokenizer -m pitch_class -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_text_bart_base.py -t PitchClassTokenizer -m specific_chord -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_text_bart_base.py -t PitchClassTokenizer -m chord_root -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_text_bart_base.py -t PitchClassTokenizer -m pitch_class -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_text_bart_base.py -t RootPCTokenizer -m specific_chord -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_text_bart_base.py -t RootPCTokenizer -m chord_root -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_text_bart_base.py -t RootPCTokenizer -m pitch_class -d /mnt/ssd2/maximos/data/hooktheory_train -v /mnt/ssd2/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
 )
 
 # Name of the conda environment
