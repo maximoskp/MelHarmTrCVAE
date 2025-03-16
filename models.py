@@ -165,8 +165,6 @@ class TransTextVAE(nn.Module):
         total_loss, recon_loss, kl_loss = self.compute_loss(recon_x, x, mu, logvar)
         g_recon = None
         g = None
-        generated_markov = None
-        recon_markov = None
         if generate_max_tokens > 0:
             # autoregressive process with temperature
             # output from reconstruction
@@ -176,9 +174,6 @@ class TransTextVAE(nn.Module):
             g_recon = self.generate(recon_x, encoder_attention, generate_max_tokens, num_bars, temperature)
             print('normal generation')
             g = self.generate(x, encoder_attention, generate_max_tokens, num_bars, temperature)
-            if self.tokenizer is not None:
-                generated_markov = self.tokenizer.make_markov_from_token_ids_tensor(g)
-                recon_markov = self.tokenizer.make_markov_from_token_ids_tensor(g_recon)
         return {
             'loss': total_loss,
             'recon_loss': recon_loss,
@@ -187,8 +182,6 @@ class TransTextVAE(nn.Module):
             'recon_x': recon_x,
             'generated_ids': g,
             'generated_recon_ids': g_recon,
-            'generated_markov': generated_markov,
-            'recon_markov': recon_markov
         }
     # end forward
 
