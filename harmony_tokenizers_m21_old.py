@@ -10,7 +10,6 @@ from GCT_functions import get_singe_GCT_of_chord as gct
 import os
 import json
 import ast
-import random
 
 INT_TO_ROOT_SHARP = {
     0: 'C',
@@ -238,10 +237,6 @@ class HarmonyTokenizerBase(PreTrainedTokenizer):
     def make_description_of_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
         raise NotImplementedError()
     # end make_description_of_tokens_list_at_random_bar
-
-    def change_and_describe_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
-        raise NotImplementedError()
-    # end change_and_describe_tokens_list_at_random_bar
 
     def fit(self, corpus):
         pass
@@ -664,21 +659,6 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
                 harmony_tokens, description_mode) )
         return torch.tensor( txts )
     # end make_description_of_token_ids_tensor_at_random_bar
-
-    def change_and_describe_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
-        return self.harmony_tokenizer.change_and_describe_tokens_list_at_random_bar(harmony_tokens, description_mode)
-    # end change_and_describe_tokens_list_at_random_bar
-
-    def change_and_describe_token_ids_tensor_at_random_bar(self, harmony_token_ids, description_mode):
-        txts = []
-        for ids in harmony_token_ids:
-            harmony_tokens = []
-            for i in ids:
-                harmony_tokens.append( self.ids_to_tokens[int(i)] )
-            txts.append( self.harmony_tokenizer.change_and_describe_tokens_list_at_random_bar(
-                harmony_tokens, description_mode) )
-        return torch.tensor( txts )
-    # end change_and_describe_token_ids_tensor_at_random_bar
 # end class MergedMelHarmTokenizer
 
 class ChordSymbolTokenizer(HarmonyTokenizerBase):
@@ -699,7 +679,7 @@ class ChordSymbolTokenizer(HarmonyTokenizerBase):
 
             for root in chromatic_roots:
                 for quality in qualities:
-                        chord_token = root + (len(quality) > 0)*':' + quality
+                        chord_token = f'{root}:{quality}'
                         #print(chord_token)
                         self.vocab[chord_token] = len(self.vocab)
             self.update_ids_to_tokens()
@@ -709,7 +689,7 @@ class ChordSymbolTokenizer(HarmonyTokenizerBase):
     def handle_chord_symbol(self, h, harmony_tokens, harmony_ids):
         # Normalize and add the chord symbol
         root_token, type_token = self.normalize_chord_symbol(h)
-        chord_token = root_token + (len(type_token) > 0)*':' + type_token
+        chord_token = root_token + ':' + type_token
         if chord_token in self.vocab:
             harmony_tokens.append(chord_token)
             harmony_ids.append(self.vocab[chord_token])
@@ -861,94 +841,6 @@ class ChordSymbolTokenizer(HarmonyTokenizerBase):
         return txt
     # end make_description_of_tokens_list_at_random_bar
 
-    def change_and_describe_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
-        # description_mode in: 'chord_root', 'specific_chord' (root+type), 'pitch_class'
-        # count how many bars and pick one at random
-        num_bars = harmony_tokens.count('<bar>')
-        # get a random bar among them
-        rand_bar_num = np.random.randint(num_bars)
-        # get bar index
-        # Find indices of all occurrences
-        indices = [i for i, val in enumerate(harmony_tokens) if val == '<bar>']
-        # Get the index of the rand_bar_num occurrence (zero-based index)
-        if len(indices) > rand_bar_num+1:
-            bar_index = indices[rand_bar_num]
-            next_bar_index = indices[rand_bar_num+1]
-        else:
-            # check if there are any bars at all
-            if len(indices) == 0:
-                return 'This piece has no bars.'
-            # the last bar
-            bar_index = indices[-1]
-            next_bar_index = len(harmony_tokens)
-        # get all tokens between rand_bar and its next
-        bar_tokens = harmony_tokens[bar_index:next_bar_index]
-        # start with the same initial description for all description modes
-        txt = f'Bar number {rand_bar_num} begins with a '
-        # make description according to description_mode
-        chord_token = None
-        if description_mode == 'specific_chord':
-            # check if bar has a chord
-            for i in range(len(bar_tokens)):
-                if 'position_' in bar_tokens[i]:
-                    if i+1 < len(bar_tokens):
-                        chord_token = bar_tokens[i+1]
-                    break
-            if chord_token is not None:
-                # change token
-                chord_token = random.choice( list(all_chords.keys()) )
-                txt += f'{chord_token} chord.'
-                # apply to bar_tokens
-                bar_tokens[i+1] = chord_token
-                # apply to harmony_tokens
-                harmony_tokens[bar_index:next_bar_index] = bar_tokens
-            else:
-                txt = f'Bar number {rand_bar_num} has no chords.'
-        elif description_mode == 'chord_root':
-            # check if bar has a chord
-            for i in range(len(bar_tokens)):
-                if 'position_' in bar_tokens[i]:
-                    if i+1 < len(bar_tokens):
-                        chord_token = bar_tokens[i+1]
-                    break
-            if chord_token is not None:
-                # change token
-                chord_token = random.choice( list(all_chords.keys()) )
-                root_part = chord_token.split(':')[0]
-                txt += f'{root_part} root.'
-                # apply to bar_tokens
-                bar_tokens[i+1] = chord_token
-                # apply to harmony_tokens
-                harmony_tokens[bar_index:next_bar_index] = bar_tokens
-            else:
-                txt = f'Bar number {rand_bar_num} has no chords.'
-        elif description_mode == 'pitch_class':
-            # check if bar has a chord
-            for i in range(len(bar_tokens)):
-                if 'position_' in bar_tokens[i]:
-                    if i+1 < len(bar_tokens):
-                        chord_token = bar_tokens[i+1]
-                    break
-            if chord_token is not None and chord_token in all_chords.keys():
-                # change token
-                chord_token = random.choice( list(all_chords.keys()) )
-                root, semitone_bitmap, _ = mir_eval.chord.encode( chord_token, reduce_extended_chords=True )
-                pcp = np.roll(semitone_bitmap, root)
-                # get a random pc
-                pc = np.random.choice(np.nonzero(pcp)[0])
-                txt += f'chord with a { INT_TO_ROOT_SHARP[pc] } pitch class.'
-                # apply to bar_tokens
-                bar_tokens[i+1] = chord_token
-                # apply to harmony_tokens
-                harmony_tokens[bar_index:next_bar_index] = bar_tokens
-            else:
-                txt = f'Bar number {rand_bar_num} has no chords.'
-        else:
-            print(f'No such description mode: {description_mode}.')
-            txt = f'Bar number {rand_bar_num} has no chords.'
-        return txt, harmony_tokens
-    # end change_and_describe_tokens_list_at_random_bar
-
 # end class ChordSymbolTokenizer
 
 class RootTypeTokenizer(HarmonyTokenizerBase):
@@ -1098,89 +990,6 @@ class RootTypeTokenizer(HarmonyTokenizerBase):
         return txt
     # end make_description_of_tokens_list_at_random_bar
 
-    def change_and_describe_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
-        # description_mode in: 'chord_root', 'specific_chord' (root+type), 'pitch_class'
-        # count how many bars and pick one at random
-        num_bars = harmony_tokens.count('<bar>')
-        # get a random bar among them
-        rand_bar_num = np.random.randint(num_bars)
-        # get bar index
-        # Find indices of all occurrences
-        indices = [i for i, val in enumerate(harmony_tokens) if val == '<bar>']
-        # Get the index of the rand_bar_num occurrence (zero-based index)
-        if len(indices) > rand_bar_num+1:
-            bar_index = indices[rand_bar_num]
-            next_bar_index = indices[rand_bar_num+1]
-        else:
-            # check if there are any bars at all
-            if len(indices) == 0:
-                return 'This piece has no bars.'
-            # the last bar
-            bar_index = indices[-1]
-            next_bar_index = len(harmony_tokens)
-        # get all tokens between rand_bar and its next
-        bar_tokens = harmony_tokens[bar_index:next_bar_index]
-        # start with the same initial description for all description modes
-        txt = f'Bar number {rand_bar_num} begins with a '
-        # make description according to description_mode
-        chord_token = None
-        # check if bar has a chord
-        within_bar_start = -1
-        within_bar_end = -1
-        for i in range(len(bar_tokens)):
-            if 'position_' in bar_tokens[i]:
-                if i+1 < len(bar_tokens):
-                    within_bar_start = i+1
-                    within_bar_end = i+2
-                    chord_token = bar_tokens[i+1]
-                if i+2 < len(bar_tokens) and bar_tokens[i+2] in EXT_MIR_QUALITIES.keys():
-                    within_bar_end = i+3
-                    chord_token += ':' + bar_tokens[i+2]
-                break
-        if description_mode == 'specific_chord':
-            if chord_token is not None:
-                # change token
-                chord_token = random.choice( list(all_chords.keys()) )
-                txt += f'{chord_token} chord.'
-                # apply to bar_tokens
-                bar_tokens[within_bar_start:within_bar_end] = chord_token.split(':')
-                # apply to harmony_tokens
-                harmony_tokens[bar_index:next_bar_index] = bar_tokens
-            else:
-                txt = f'Bar number {rand_bar_num} has no chords.'
-        elif description_mode == 'chord_root':
-            if chord_token is not None and chord_token in ROOT_TO_INT_SHARP.keys():
-                # change token
-                chord_token = random.choice( list(all_chords.keys()) )
-                root_part = chord_token.split(':')[0]
-                txt += f'{root_part} root.'
-                # apply to bar_tokens
-                bar_tokens[within_bar_start:within_bar_end] = chord_token.split(':')
-                # apply to harmony_tokens
-                harmony_tokens[bar_index:next_bar_index] = bar_tokens
-            else:
-                txt = f'Bar number {rand_bar_num} has no chords.'
-        elif description_mode == 'pitch_class':
-            if chord_token is not None and chord_token in all_chords.keys():
-                # change token
-                chord_token = random.choice( list(all_chords.keys()) )
-                root, semitone_bitmap, _ = mir_eval.chord.encode( chord_token, reduce_extended_chords=True )
-                pcp = np.roll(semitone_bitmap, root)
-                # get a random pc
-                pc = np.random.choice(np.nonzero(pcp)[0])
-                txt += f'chord with a { INT_TO_ROOT_SHARP[pc] } pitch class.'
-                # apply to bar_tokens
-                bar_tokens[within_bar_start:within_bar_end] = chord_token.split(':')
-                # apply to harmony_tokens
-                harmony_tokens[bar_index:next_bar_index] = bar_tokens
-            else:
-                txt = f'Bar number {rand_bar_num} has no chords.'
-        else:
-            print(f'No such description mode: {description_mode}.')
-            txt = f'Bar number {rand_bar_num} has no chords.'
-        return txt, harmony_tokens
-    # end change_and_describe_tokens_list_at_random_bar
-
 # end class RootTypeTokenizer
 
 class PitchClassTokenizer(HarmonyTokenizerBase):
@@ -1199,8 +1008,8 @@ class PitchClassTokenizer(HarmonyTokenizerBase):
         # Normalize and add the chord symbol
         root_token, type_token = self.normalize_chord_symbol(h)
         if type_token in EXT_MIR_QUALITIES:
-            chord_root, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
-            pcs = (chord_root + np.where(bmap > 0)[0])%12
+            root_pc, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
+            pcs = (root_pc + np.where(bmap > 0)[0])%12
             for pc in pcs:
                 tmp_token = 'chord_pc_' + str(pc)
                 harmony_tokens.append( tmp_token )
@@ -1303,108 +1112,6 @@ class PitchClassTokenizer(HarmonyTokenizerBase):
         return txt
     # end make_description_of_tokens_list_at_random_bar
 
-    def change_and_describe_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
-        # description_mode in: 'chord_root', 'specific_chord' (root+type), 'pitch_class'
-        # count how many bars and pick one at random
-        num_bars = harmony_tokens.count('<bar>')
-        # get a random bar among them
-        rand_bar_num = np.random.randint(num_bars)
-        # get bar index
-        # Find indices of all occurrences
-        indices = [i for i, val in enumerate(harmony_tokens) if val == '<bar>']
-        # Get the index of the rand_bar_num occurrence (zero-based index)
-        if len(indices) > rand_bar_num+1:
-            bar_index = indices[rand_bar_num]
-            next_bar_index = indices[rand_bar_num+1]
-        else:
-            # check if there are any bars at all
-            if len(indices) == 0:
-                return 'This piece has no bars.'
-            # the last bar
-            bar_index = indices[-1]
-            next_bar_index = len(harmony_tokens)
-        # get all tokens between rand_bar and its next
-        bar_tokens = harmony_tokens[bar_index:next_bar_index]
-        # start with the same initial description for all description modes
-        txt = f'Bar number {rand_bar_num} begins with a '
-        # make description according to description_mode
-        # keep pcs of first chord
-        pcs = np.zeros(12)
-        chord_token = None
-        within_bar_start = -1
-        within_bar_end = -1
-        for i in range(len(bar_tokens)):
-            if 'position_' in bar_tokens[i]:
-                i += 1
-                within_bar_start = i
-                while i < len(bar_tokens) and 'bar' not in bar_tokens[i] and \
-                    'position' not in bar_tokens[i] and \
-                    '</s>' not in bar_tokens[i]:
-                    if 'chord_pc_' in bar_tokens[i]:
-                        pcs[ int( bar_tokens[i].split('chord_pc_')[1] ) ] = 1
-                    i += 1
-                break
-                within_bar_end = i
-        if np.sum(pcs) > 0:
-            chord_token = get_closes_mir_symbol_for_binpcp(pcs)
-            # refresh pcs to reflect new chord
-            chord_root, bmap, _ = mir_eval.chord.encode( chord_token, reduce_extended_chords=True )
-            pcs = (chord_root + np.where(bmap > 0)[0])%12
-        if description_mode == 'specific_chord':
-            if chord_token is not None:
-                # change token
-                chord_token = random.choice( list(all_chords.keys()) )
-                txt += f'{chord_token} chord.'
-                # apply to bar_tokens
-                tmp_tokens = []
-                for pc in pcs:
-                    tmp_tokens.append( 'chord_pc_' + str(pc) )
-                bar_tokens[within_bar_start:within_bar_end] = tmp_tokens
-                # apply to harmony_tokens
-                harmony_tokens[bar_index:next_bar_index] = bar_tokens
-            else:
-                txt = f'Bar number {rand_bar_num} has no chords.'
-        elif description_mode == 'chord_root':
-            root_part = None
-            if chord_token is not None:
-                # change token
-                chord_token = random.choice( list(all_chords.keys()) )
-                root_part = chord_token.split(':')[0]
-                if root_part is not None and root_part in ROOT_TO_INT_SHARP.keys():
-                    txt += f'{root_part} root.'
-                    # apply to bar_tokens
-                    tmp_tokens = []
-                    for pc in pcs:
-                        tmp_tokens.append( 'chord_pc_' + str(pc) )
-                    bar_tokens[within_bar_start:within_bar_end] = tmp_tokens
-                    # apply to harmony_tokens
-                    harmony_tokens[bar_index:next_bar_index] = bar_tokens
-                else:
-                    txt = f'Bar number {rand_bar_num} has no chords.'
-            else:
-                txt = f'Bar number {rand_bar_num} has no chords.'
-        elif description_mode == 'pitch_class':
-            if chord_token is not None:
-                # change token
-                chord_token = random.choice( list(all_chords.keys()) )
-                # get a random pc
-                pc = np.random.choice(np.nonzero(pcs)[0])
-                txt += f'chord with a { INT_TO_ROOT_SHARP[pc] } pitch class.'
-                # apply to bar_tokens
-                tmp_tokens = []
-                for pc in pcs:
-                    tmp_tokens.append( 'chord_pc_' + str(pc) )
-                bar_tokens[within_bar_start:within_bar_end] = tmp_tokens
-                # apply to harmony_tokens
-                harmony_tokens[bar_index:next_bar_index] = bar_tokens
-            else:
-                txt = f'Bar number {rand_bar_num} has no chords.'
-        else:
-            print(f'No such description mode: {description_mode}.')
-            txt = f'Bar number {rand_bar_num} has no chords.'
-        return txt, harmony_tokens
-    # end change_and_describe_tokens_list_at_random_bar
-
 # end class PitchClassTokenizer
 
 class RootPCTokenizer(HarmonyTokenizerBase):
@@ -1425,13 +1132,13 @@ class RootPCTokenizer(HarmonyTokenizerBase):
         # Normalize and add the chord symbol
         root_token, type_token = self.normalize_chord_symbol(h)
         if type_token in EXT_MIR_QUALITIES:
-            chord_root, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
-            pcs = (chord_root + np.where(bmap > 0)[0])%12
-            tmp_token = 'chord_root_' + str(chord_root)
+            root_pc, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
+            pcs = (root_pc + np.where(bmap > 0)[0])%12
+            tmp_token = 'chord_root_' + str(root_pc)
             harmony_tokens.append( tmp_token )
             harmony_ids.append(self.vocab[ tmp_token ])
             for pc in pcs:
-                if pc != chord_root:
+                if pc != root_pc:
                     tmp_token = 'chord_pc_' + str(pc)
                     harmony_tokens.append( tmp_token )
                     harmony_ids.append(self.vocab[ tmp_token ])
@@ -1492,7 +1199,7 @@ class RootPCTokenizer(HarmonyTokenizerBase):
         # make description according to description_mode
         # keep pcs of first chord
         pcs = np.zeros(12)
-        chord_root = -1
+        root_pc = -1
         chord_token = None
         for i in range(len(bar_tokens)):
             if 'position_' in bar_tokens[i]:
@@ -1502,8 +1209,8 @@ class RootPCTokenizer(HarmonyTokenizerBase):
                     '</s>' not in bar_tokens[i]:
                     if '_pc_' in bar_tokens[i]:
                         pcs[ int( bar_tokens[i].split('_pc_')[1] ) ] = 1
-                        if 'chord_root_' in bar_tokens[i]:
-                            chord_root = int( bar_tokens[i].split('chord_root_')[1] )
+                        if 'root_pc_' in bar_tokens[i]:
+                            root_pc = int( bar_tokens[i].split('root_pc_')[1] )
                     i += 1
                 break
         if description_mode == 'specific_chord':
@@ -1513,8 +1220,8 @@ class RootPCTokenizer(HarmonyTokenizerBase):
                 txt = f'Bar number {rand_bar_num} has no chords.'
         elif description_mode == 'chord_root':
             root_part = None
-            if chord_root >= 0:
-                root_part = INT_TO_ROOT_SHARP[chord_root]
+            if root_pc >= 0:
+                root_part = INT_TO_ROOT_SHARP[root_pc]
                 txt += f'{root_part} root.'
             else:
                 txt = f'Bar number {rand_bar_num} has no chords.'
@@ -1531,119 +1238,6 @@ class RootPCTokenizer(HarmonyTokenizerBase):
             txt = f'Bar number {rand_bar_num} has no chords.'
         return txt
     # end make_description_of_tokens_list_at_random_bar
-
-    def change_and_describe_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
-        # description_mode in: 'chord_root', 'specific_chord' (root+type), 'pitch_class'
-        # count how many bars and pick one at random
-        num_bars = harmony_tokens.count('<bar>')
-        # get a random bar among them
-        rand_bar_num = np.random.randint(num_bars)
-        # get bar index
-        # Find indices of all occurrences
-        indices = [i for i, val in enumerate(harmony_tokens) if val == '<bar>']
-        # Get the index of the rand_bar_num occurrence (zero-based index)
-        if len(indices) > rand_bar_num+1:
-            bar_index = indices[rand_bar_num]
-            next_bar_index = indices[rand_bar_num+1]
-        else:
-            # check if there are any bars at all
-            if len(indices) == 0:
-                return 'This piece has no bars.'
-            # the last bar
-            bar_index = indices[-1]
-            next_bar_index = len(harmony_tokens)
-        # get all tokens between rand_bar and its next
-        bar_tokens = harmony_tokens[bar_index:next_bar_index]
-        # start with the same initial description for all description modes
-        txt = f'Bar number {rand_bar_num} begins with a '
-        # make description according to description_mode
-        # keep pcs of first chord
-        pcs = np.zeros(12)
-        chord_token = None
-        new_root_int = -1
-        within_bar_start = -1
-        within_bar_end = -1
-        for i in range(len(bar_tokens)):
-            if 'position_' in bar_tokens[i]:
-                i += 1
-                within_bar_start = i
-                while i < len(bar_tokens) and 'bar' not in bar_tokens[i] and \
-                    'position' not in bar_tokens[i] and \
-                    '</s>' not in bar_tokens[i]:
-                    if '_pc_' in bar_tokens[i]:
-                        pcs[ int( bar_tokens[i].split('_pc_')[1] ) ] = 1
-                    i += 1
-                break
-                within_bar_end = i
-        if np.sum(pcs) > 0:
-            chord_token = get_closes_mir_symbol_for_binpcp(pcs)
-            # refresh pcs to reflect new chord
-            chord_root, bmap, _ = mir_eval.chord.encode( chord_token, reduce_extended_chords=True )
-            pcs = (chord_root + np.where(bmap > 0)[0])%12
-            new_root_int = chord_root
-        if description_mode == 'specific_chord':
-            if chord_token is not None:
-                # change token
-                chord_token = random.choice( list(all_chords.keys()) )
-                txt += f'{chord_token} chord.'
-                # apply to bar_tokens
-                tmp_tokens = []
-                for pc in pcs:
-                    if pc == new_root_int:
-                        tmp_tokens.append( 'chord_root_' + str(pc) )
-                    else:
-                        tmp_tokens.append( 'chord_pc_' + str(pc) )
-                bar_tokens[within_bar_start:within_bar_end] = tmp_tokens
-                # apply to harmony_tokens
-                harmony_tokens[bar_index:next_bar_index] = bar_tokens
-            else:
-                txt = f'Bar number {rand_bar_num} has no chords.'
-        elif description_mode == 'chord_root':
-            root_part = None
-            if chord_token is not None:
-                # change token
-                chord_token = random.choice( list(all_chords.keys()) )
-                root_part = chord_token.split(':')[0]
-                if root_part is not None and root_part in ROOT_TO_INT_SHARP.keys():
-                    txt += f'{root_part} root.'
-                    # apply to bar_tokens
-                    tmp_tokens = []
-                    for pc in pcs:
-                        if pc == new_root_int:
-                            tmp_tokens.append( 'chord_root_' + str(pc) )
-                        else:
-                            tmp_tokens.append( 'chord_pc_' + str(pc) )
-                    bar_tokens[within_bar_start:within_bar_end] = tmp_tokens
-                    # apply to harmony_tokens
-                    harmony_tokens[bar_index:next_bar_index] = bar_tokens
-                else:
-                    txt = f'Bar number {rand_bar_num} has no chords.'
-            else:
-                txt = f'Bar number {rand_bar_num} has no chords.'
-        elif description_mode == 'pitch_class':
-            if chord_token is not None:
-                # change token
-                chord_token = random.choice( list(all_chords.keys()) )
-                # get a random pc
-                pc = np.random.choice(np.nonzero(pcs)[0])
-                txt += f'chord with a { INT_TO_ROOT_SHARP[pc] } pitch class.'
-                # apply to bar_tokens
-                tmp_tokens = []
-                for pc in pcs:
-                    if pc == new_root_int:
-                        tmp_tokens.append( 'chord_root_' + str(pc) )
-                    else:
-                        tmp_tokens.append( 'chord_pc_' + str(pc) )
-                bar_tokens[within_bar_start:within_bar_end] = tmp_tokens
-                # apply to harmony_tokens
-                harmony_tokens[bar_index:next_bar_index] = bar_tokens
-            else:
-                txt = f'Bar number {rand_bar_num} has no chords.'
-        else:
-            print(f'No such description mode: {description_mode}.')
-            txt = f'Bar number {rand_bar_num} has no chords.'
-        return txt, harmony_tokens
-    # end change_and_describe_tokens_list_at_random_bar
 
 # end class RootPCTokenizer
 
@@ -1665,8 +1259,8 @@ class GCTRootPCTokenizer(HarmonyTokenizerBase):
         # Normalize and add the chord symbol
         root_token, type_token = self.normalize_chord_symbol(h)
         if type_token in EXT_MIR_QUALITIES:
-            chord_root, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
-            pcs = (chord_root + np.where(bmap > 0)[0])%12
+            root_pc, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
+            pcs = (root_pc + np.where(bmap > 0)[0])%12
             # get gct
             g = gct( pcs )
             # get root pc
@@ -1707,10 +1301,6 @@ class GCTRootPCTokenizer(HarmonyTokenizerBase):
         print('Not implemented yet for ', self.__class__.__name__)
     # end make_description_of_tokens_list_at_random_bar
 
-    def change_and_describe_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
-        print('Not implemented yet for ', self.__class__.__name__)
-    # end change_and_describe_tokens_list_at_random_bar
-
 # end class GCTRootPCTokenizer
 
 class GCTSymbolTokenizer(HarmonyTokenizerBase):
@@ -1723,8 +1313,8 @@ class GCTSymbolTokenizer(HarmonyTokenizerBase):
         # Normalize and add the chord symbol
         root_token, type_token = self.normalize_chord_symbol(h)
         if type_token in EXT_MIR_QUALITIES:
-            chord_root, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
-            pcs = (chord_root + np.where(bmap > 0)[0])%12
+            root_pc, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
+            pcs = (root_pc + np.where(bmap > 0)[0])%12
             # get gct
             g = gct( pcs )
             tmp_token = str(g)
@@ -1764,8 +1354,8 @@ class GCTSymbolTokenizer(HarmonyTokenizerBase):
                     # Normalize and add the chord symbol
                     root_token, type_token = self.normalize_chord_symbol(h)
                     if type_token in EXT_MIR_QUALITIES:
-                        chord_root, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
-                        pcs = (chord_root + np.where(bmap > 0)[0])%12
+                        root_pc, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
+                        pcs = (root_pc + np.where(bmap > 0)[0])%12
                         # get gct
                         g = gct( pcs )
                         tmp_token = str(g)
@@ -1799,10 +1389,6 @@ class GCTSymbolTokenizer(HarmonyTokenizerBase):
         print('Not implemented yet for ', self.__class__.__name__)
     # end make_description_of_tokens_list_at_random_bar
 
-    def change_and_describe_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
-        print('Not implemented yet for ', self.__class__.__name__)
-    # end change_and_describe_tokens_list_at_random_bar
-
 # end class GCTSymbolTokenizer
 
 class GCTRootTypeTokenizer(HarmonyTokenizerBase):
@@ -1820,8 +1406,8 @@ class GCTRootTypeTokenizer(HarmonyTokenizerBase):
         # Normalize and add the chord symbol
         root_token, type_token = self.normalize_chord_symbol(h)
         if type_token in EXT_MIR_QUALITIES:
-            chord_root, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
-            pcs = (chord_root + np.where(bmap > 0)[0])%12
+            root_pc, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
+            pcs = (root_pc + np.where(bmap > 0)[0])%12
             # get gct
             g = gct( pcs )
             # get gct root
@@ -1866,8 +1452,8 @@ class GCTRootTypeTokenizer(HarmonyTokenizerBase):
                     # Normalize and add the chord symbol
                     root_token, type_token = self.normalize_chord_symbol(h)
                     if type_token in EXT_MIR_QUALITIES:
-                        chord_root, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
-                        pcs = (chord_root + np.where(bmap > 0)[0])%12
+                        root_pc, bmap, _ = mir_eval.chord.encode( root_token + (len(type_token) > 0)*':' + type_token, reduce_extended_chords=True )
+                        pcs = (root_pc + np.where(bmap > 0)[0])%12
                         # get gct
                         g = gct( pcs )
                         tmp_token = str(g[1:])
@@ -1901,10 +1487,6 @@ class GCTRootTypeTokenizer(HarmonyTokenizerBase):
     def make_description_of_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
         print('Not implemented yet for ', self.__class__.__name__)
     # end make_description_of_tokens_list_at_random_bar
-
-    def change_and_describe_tokens_list_at_random_bar(self, harmony_tokens, description_mode):
-        print('Not implemented yet for ', self.__class__.__name__)
-    # end change_and_describe_tokens_list_at_random_bar
 
 # end class GCTRootTypeTokenizer
 
